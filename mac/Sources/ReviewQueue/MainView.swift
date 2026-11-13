@@ -4,19 +4,32 @@ import SwiftUI
 struct MainView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("repo") private var repo = ""
+    @State private var selection: PRRow.ID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            RepoPicker(repo: $repo)
-                .padding()
-            Divider()
-            if repo.isEmpty {
-                placeholder("Select a repository")
+        NavigationSplitView {
+            VStack(alignment: .leading, spacing: 0) {
+                RepoPicker(repo: $repo)
+                    .padding()
+                Divider()
+                if repo.isEmpty {
+                    placeholder("Select a repository")
+                } else {
+                    RequestList(selection: $selection)
+                        .task(id: repo) { await model.poll(repo: repo) }
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 360, ideal: 440)
+        } detail: {
+            if let row = model.rows.first(where: { $0.id == selection }) {
+                PRDetailView(repo: repo, row: row)
+                    .id("\(repo)#\(row.number)")
             } else {
-                RequestList()
-                    .task(id: repo) { await model.poll(repo: repo) }
+                placeholder("Select a pull request")
             }
         }
+        .frame(minWidth: 820, minHeight: 480)
+        .onChange(of: repo) { selection = nil }
         .task { await model.loadRepositories() }
     }
 }
@@ -89,6 +102,7 @@ private struct RepoSearch: View {
 
 private struct RequestList: View {
     @Environment(AppModel.self) private var model
+    @Binding var selection: PRRow.ID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -113,15 +127,21 @@ private struct RequestList: View {
             } else if model.rows.isEmpty {
                 placeholder("No review requests")
             } else {
-                List(model.rows) { row in
-                    Button {
-                        NSWorkspace.shared.open(row.url)
-                    } label: {
-                        RowView(row: row)
-                    }
-                    .buttonStyle(.plain)
+                List(model.rows, selection: $selection) { row in
+                    RowView(row: row)
+                }
+                .contextMenu(forSelectionType: PRRow.ID.self) { ids in
+                    Button("Open on GitHub") { open(ids) }
+                } primaryAction: { ids in
+                    open(ids)
                 }
             }
+        }
+    }
+
+    private func open(_ ids: Set<PRRow.ID>) {
+        for row in model.rows where ids.contains(row.id) {
+            NSWorkspace.shared.open(row.url)
         }
     }
 }
@@ -167,15 +187,16 @@ private struct RowView: View {
         .contentShape(Rectangle())
     }
 
-    private func capsule(_ text: String, color: Color) -> some View {
-        Text(text)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.2), in: Capsule())
-    }
 }
 
-private func placeholder(_ text: String) -> some View {
+func capsule(_ text: String, color: Color) -> some View {
+    Text(text)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background(color.opacity(0.2), in: Capsule())
+}
+
+func placeholder(_ text: String) -> some View {
     Text(text)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

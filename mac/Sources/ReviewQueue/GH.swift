@@ -101,6 +101,10 @@ enum GH {
         }
         """
 
+    static func pullRequest(repo: String, number: Int) async throws -> PRDetail {
+        try PRDetail.decode(await run(["pr", "view", String(number), "--repo", repo, "--json", PRDetail.fields]))
+    }
+
     static func reviewRequests(repo: String, login: String) async throws -> Data {
         let owner = repo.split(separator: "/").first.map(String.init) ?? repo
         return try await run([
