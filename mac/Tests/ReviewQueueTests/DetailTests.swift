@@ -42,7 +42,30 @@ import Testing
     #expect(CheckSummary(passed: 4).text == "4 passed")
 }
 
+private func plain(_ lines: [BodyLine]) -> [String] {
+    lines.map { String($0.text.characters) }
+}
+
 @Test func bodyDropsHtmlComments() {
-    let body = renderBody("<!-- template\nhint -->\nUse **this**")
-    #expect(String(body.characters) == "Use this")
+    #expect(plain(bodyLines("<!-- template\nhint -->\nUse **this**")) == ["Use this"])
+}
+
+@Test func bodyIsSplitIntoLines() {
+    let lines = bodyLines("""
+    ## Changelog
+
+    - one **bold**
+
+
+    ```js
+    let a = **1**
+    ```
+    plain
+    """)
+    #expect(lines.map(\.kind) == [.heading(level: 2), .gap, .text, .gap, .code, .text])
+    #expect(plain(lines) == ["Changelog", "", "- one bold", "", "let a = **1**", "plain"])
+}
+
+@Test func emptyBodyHasNoLines() {
+    #expect(bodyLines("<!-- only a comment -->\n\n").isEmpty)
 }

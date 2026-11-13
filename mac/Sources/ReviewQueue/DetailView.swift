@@ -5,32 +5,35 @@ struct PRDetailView: View {
     let repo: String
     let row: PRRow
     @State private var detail: PRDetail?
+    @State private var lines: [BodyLine] = []
     @State private var error: String?
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                if let error {
-                    Text(error)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-                if let detail {
-                    facts(detail)
-                    Divider()
-                    if detail.body.isEmpty {
-                        Text("No description")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(renderBody(detail.body))
+            LazyVStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+                    if let error {
+                        Text(error)
+                            .foregroundStyle(.red)
                             .textSelection(.enabled)
                     }
-                } else if error == nil {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
+                    if let detail {
+                        facts(detail)
+                        Divider()
+                        if lines.isEmpty {
+                            Text("No description")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if error == nil {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    }
                 }
+                .padding(.bottom, 14)
+                ForEach(lines) { BodyLineView(line: $0) }
             }
+            .textSelection(.enabled)
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -118,11 +121,35 @@ struct PRDetailView: View {
         do {
             let fetched = try await GH.pullRequest(repo: repo, number: row.number)
             guard !Task.isCancelled else { return }
+            lines = bodyLines(fetched.body)
             detail = fetched
             error = nil
         } catch {
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
+        }
+    }
+}
+
+private struct BodyLineView: View {
+    let line: BodyLine
+
+    var body: some View {
+        switch line.kind {
+        case .text:
+            Text(line.text)
+        case .heading(let level):
+            Text(line.text)
+                .font(level <= 2 ? .title3.bold() : .headline)
+                .padding(.top, 6)
+        case .code:
+            Text(line.text)
+                .font(.callout.monospaced())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .background(.quaternary)
+        case .gap:
+            Spacer().frame(height: 6)
         }
     }
 }
