@@ -42,9 +42,6 @@ struct PRDetailView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(row.title)
-                .font(.title2.bold())
-                .textSelection(.enabled)
             HStack(spacing: 6) {
                 Text(verbatim: "#\(row.number)")
                     .monospacedDigit()

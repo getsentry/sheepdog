@@ -8,15 +8,17 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            VStack(alignment: .leading, spacing: 0) {
-                RepoPicker(repo: $repo)
-                    .padding()
-                Divider()
+            Group {
                 if repo.isEmpty {
                     placeholder("Select a repository")
                 } else {
                     RequestList(selection: $selection)
                         .task(id: repo) { await model.poll(repo: repo) }
+                }
+            }
+            .toolbar {
+                ToolbarItem {
+                    RepoPicker(repo: $repo)
                 }
             }
             .navigationSplitViewColumnWidth(min: 360, ideal: 440)
