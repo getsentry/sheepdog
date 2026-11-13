@@ -21,6 +21,17 @@ struct MainView: View {
                     RepoPicker(repo: $repo)
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Settings")
+                    Spacer()
+                }
+                .padding(10)
+            }
             .navigationSplitViewColumnWidth(min: 360, ideal: 440)
         } detail: {
             Group {
@@ -42,6 +53,7 @@ struct MainView: View {
 }
 
 private struct RepoPicker: View {
+    @Environment(AppModel.self) private var model
     @Binding var repo: String
     @State private var isOpen = false
 
@@ -58,7 +70,7 @@ private struct RepoPicker: View {
         }
         .buttonStyle(.borderless)
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
-            RepoSearch { name in
+            SearchList(prompt: "Search repositories", items: model.repositories.isEmpty ? nil : model.repositories) { name in
                 repo = name
                 isOpen = false
             }
@@ -67,25 +79,33 @@ private struct RepoPicker: View {
 }
 
 // The popover is a separate window, so its focus state must live inside the popover content.
-private struct RepoSearch: View {
-    @Environment(AppModel.self) private var model
+struct SearchList: View {
+    let prompt: String
+    // nil while the items load.
+    let items: [String]?
+    var error: String?
     let select: (String) -> Void
     @State private var search = ""
     @FocusState private var searchFocused: Bool
 
     private var matches: [String] {
-        search.isEmpty ? model.repositories : model.repositories.filter { $0.localizedCaseInsensitiveContains(search) }
+        let items = items ?? []
+        return search.isEmpty ? items : items.filter { $0.localizedCaseInsensitiveContains(search) }
     }
 
     var body: some View {
         VStack(spacing: 8) {
-            TextField("Search repositories", text: $search)
+            TextField(prompt, text: $search)
                 .textFieldStyle(.roundedBorder)
                 .focused($searchFocused)
                 .onSubmit {
                     if let first = matches.first { select(first) }
                 }
-            if model.repositories.isEmpty {
+            if let error {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if items == nil {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

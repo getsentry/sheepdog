@@ -32,5 +32,8 @@ struct ReviewQueueApp: App {
             .environment(delegate.model)
             .task { await delegate.model.start() }
         }
+        Settings {
+            SettingsView()
+        }
     }
 }
