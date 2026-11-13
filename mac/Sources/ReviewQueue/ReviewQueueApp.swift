@@ -22,8 +22,8 @@ struct ReviewQueueApp: App {
     var body: some Scene {
         Window("Review Queue", id: "main") {
             Group {
-                if case .signedIn(let login) = delegate.model.auth {
-                    Text("Signed in as \(login)")
+                if case .signedIn = delegate.model.auth {
+                    MainView()
                 } else {
                     LoginView()
                 }

@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import OSLog
+
+private let log = Logger(subsystem: "com.alwx.reviewqueue", category: "poll")
 
 enum AuthState: Equatable {
     case checking
@@ -78,6 +81,38 @@ final class AppModel {
         } else {
             error = output.trimmingCharacters(in: .whitespacesAndNewlines)
             auth = .signedOut
+        }
+    }
+
+    func loadRepositories() async {
+        guard repositories.isEmpty else { return }
+        do {
+            repositories = try await GH.repositories()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func poll(repo: String) async {
+        guard case .signedIn(let login) = auth else { return }
+        rows = []
+        lastRefresh = nil
+        error = nil
+        while !Task.isCancelled {
+            do {
+                let fetched = try toRows(await GH.reviewRequests(repo: repo, login: login), login: login)
+                // GH.run does not stop on cancellation, so a fetch for an old repository must not write rows.
+                guard !Task.isCancelled else { return }
+                log.info("fetch \(repo, privacy: .public): \(fetched.count) rows")
+                rows = fetched
+                lastRefresh = .now
+                error = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                log.error("fetch \(repo, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                self.error = error.localizedDescription
+            }
+            try? await Task.sleep(for: .seconds(30))
         }
     }
 
