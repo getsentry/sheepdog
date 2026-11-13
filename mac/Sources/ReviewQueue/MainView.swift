@@ -23,12 +23,16 @@ struct MainView: View {
             }
             .navigationSplitViewColumnWidth(min: 360, ideal: 440)
         } detail: {
-            if let row = model.rows.first(where: { $0.id == selection }) {
-                PRDetailView(repo: repo, row: row)
-                    .id("\(repo)#\(row.number)")
-            } else {
-                placeholder("Select a pull request")
+            Group {
+                if let row = model.rows.first(where: { $0.id == selection }) {
+                    PRDetailView(repo: repo, row: row)
+                        .id("\(repo)#\(row.number)")
+                } else {
+                    placeholder("Select a pull request")
+                }
             }
+            // AppKit starts the toolbar background of this column a few points left of the divider, over the sidebar.
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
         .navigationTitle(model.rows.first { $0.id == selection }?.title ?? "")
         .frame(minWidth: 820, minHeight: 480)
