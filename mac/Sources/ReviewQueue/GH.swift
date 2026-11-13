@@ -81,7 +81,7 @@ enum GH {
           search(query: $q, type: ISSUE, first: 100) {
             nodes {
               ... on PullRequest {
-                number title url isDraft updatedAt
+                number title url isDraft updatedAt additions deletions
                 author { login }
                 reviewRequests(first: 50) {
                   nodes { requestedReviewer {

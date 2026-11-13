@@ -150,9 +150,18 @@ private struct RowView: View {
                 .font(.caption)
             }
             Spacer()
-            Text(row.updatedAt, style: .relative)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 4) {
+                    Text(verbatim: "+\(row.additions)")
+                        .foregroundStyle(.green)
+                    Text(verbatim: "−\(row.deletions)")
+                        .foregroundStyle(.red)
+                }
+                .monospacedDigit()
+                Text(row.updatedAt, style: .relative)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())

@@ -6,6 +6,8 @@ struct PRRow: Identifiable, Equatable {
     let url: URL
     let isDraft: Bool
     let updatedAt: Date
+    let additions: Int
+    let deletions: Int
     let author: String
     let reasons: [String]
 
@@ -39,6 +41,8 @@ private struct PullRequest: Decodable {
     let url: URL
     let isDraft: Bool
     let updatedAt: Date
+    let additions: Int
+    let deletions: Int
     let author: Author?
     let reviewRequests: Nodes<ReviewRequest>
 }
@@ -76,6 +80,8 @@ func toRows(_ data: Data, login: String) throws -> [PRRow] {
             url: pr.url,
             isDraft: pr.isDraft,
             updatedAt: pr.updatedAt,
+            additions: pr.additions,
+            deletions: pr.deletions,
             author: pr.author?.login ?? "ghost",
             reasons: reasons
         )

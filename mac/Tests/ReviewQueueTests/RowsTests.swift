@@ -13,6 +13,8 @@ private let fixture = Data("""
           "url": "https://github.com/acme/app/pull/1",
           "isDraft": false,
           "updatedAt": "2026-11-10T10:00:00Z",
+          "additions": 12,
+          "deletions": 3,
           "author": { "login": "bob" },
           "reviewRequests": { "nodes": [
             { "requestedReviewer": { "__typename": "User", "login": "me" } },
@@ -25,6 +27,8 @@ private let fixture = Data("""
           "url": "https://github.com/acme/app/pull/2",
           "isDraft": false,
           "updatedAt": "2026-11-12T10:00:00Z",
+          "additions": 40,
+          "deletions": 0,
           "author": { "login": "dave" },
           "reviewRequests": { "nodes": [
             { "requestedReviewer": { "__typename": "Team", "combinedSlug": "acme/mobile", "name": "Mobile" } }
@@ -36,6 +40,8 @@ private let fixture = Data("""
           "url": "https://github.com/acme/app/pull/3",
           "isDraft": false,
           "updatedAt": "2026-11-09T10:00:00Z",
+          "additions": 7,
+          "deletions": 7,
           "author": { "login": "erin" },
           "reviewRequests": { "nodes": [
             { "requestedReviewer": { "__typename": "Team", "combinedSlug": "acme/docs", "name": "Docs" } }
@@ -47,6 +53,8 @@ private let fixture = Data("""
           "url": "https://github.com/acme/app/pull/4",
           "isDraft": true,
           "updatedAt": "2026-11-11T10:00:00Z",
+          "additions": 150,
+          "deletions": 20,
           "author": null,
           "reviewRequests": { "nodes": [
             { "requestedReviewer": { "__typename": "User", "login": "me" } }
@@ -58,6 +66,8 @@ private let fixture = Data("""
           "url": "https://github.com/acme/app/pull/5",
           "isDraft": false,
           "updatedAt": "2026-11-12T12:00:00Z",
+          "additions": 1,
+          "deletions": 2,
           "author": { "login": "bob" },
           "reviewRequests": { "nodes": [
             { "requestedReviewer": { "__typename": "User", "login": "me" } },
@@ -111,6 +121,8 @@ private func row(_ number: Int) throws -> PRRow {
     #expect(first.author == "bob")
     #expect(first.url == URL(string: "https://github.com/acme/app/pull/1"))
     #expect(first.updatedAt == ISO8601DateFormatter().date(from: "2026-11-10T10:00:00Z"))
+    #expect(first.additions == 12)
+    #expect(first.deletions == 3)
 }
 
 @Test func userOwnedRepositoryHasNoTeams() throws {
