@@ -105,6 +105,20 @@ enum GH {
         try PRDetail.decode(await run(["pr", "view", String(number), "--repo", repo, "--json", PRDetail.fields]))
     }
 
+    static func diff(repo: String, number: Int) async throws -> String {
+        String(decoding: try await run(["pr", "diff", String(number), "--repo", repo]), as: UTF8.self)
+    }
+
+    // Read from the base branch, so that a PR cannot change the review instructions.
+    static func agentsFile(repo: String, ref: String) async throws -> String? {
+        do {
+            let data = try await run(["api", "repos/\(repo)/contents/AGENTS.md?ref=\(ref)", "-H", "Accept: application/vnd.github.raw"])
+            return String(decoding: data, as: UTF8.self)
+        } catch let error as GHError where error.message.contains("HTTP 404") {
+            return nil
+        }
+    }
+
     static func reviewRequests(repo: String, login: String) async throws -> Data {
         let owner = repo.split(separator: "/").first.map(String.init) ?? repo
         return try await run([
