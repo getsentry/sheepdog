@@ -28,6 +28,7 @@ struct MainView: View {
                 placeholder("Select a pull request")
             }
         }
+        .navigationTitle(model.rows.first { $0.id == selection }?.title ?? "")
         .frame(minWidth: 820, minHeight: 480)
         .onChange(of: repo) { selection = nil }
         .task { await model.loadRepositories() }
