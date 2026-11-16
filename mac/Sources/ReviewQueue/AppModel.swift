@@ -95,6 +95,7 @@ final class AppModel {
         do {
             open(makeClient(try Self.serverAddress(serverURL), token: token))
         } catch {
+            tokens.delete()
             signInError = error.localizedDescription
             auth = .signedOut
         }
@@ -187,15 +188,17 @@ final class AppModel {
         try await checked { try await $0.pullRequest(repo: repo, number: number) }
     }
 
-    // A review event can arrive while the request runs, so an older review never replaces a newer one.
+    // A review event can arrive while the request runs, so an older review never replaces a newer one, and a new error stays.
+    // The server does not store failed reviews, so a reload that finds no review keeps the error.
     func loadReview(repo: String, number: Int) async {
         let key = Self.key(repo: repo, number: number)
+        let previousError = reviewErrors[key]
         do {
-            let review = try await checked { try await $0.review(repo: repo, number: number) }
-            if let review, review.createdAt >= reviews[key]?.createdAt ?? .distantPast {
+            guard let review = try await checked({ try await $0.review(repo: repo, number: number) }) else { return }
+            if review.createdAt >= reviews[key]?.createdAt ?? .distantPast {
                 reviews[key] = review
             }
-            reviewErrors[key] = nil
+            if reviewErrors[key] == previousError { reviewErrors[key] = nil }
         } catch is CancellationError {
         } catch {
             reviewErrors[key] = error.localizedDescription
@@ -260,6 +263,9 @@ final class AppModel {
         switch update {
         case .connected:
             connectionError = nil
+            if repositoriesError != nil {
+                Task { await loadRepositories() }
+            }
             // The server does not send again the review events that the client missed while the stream was down.
             if let number = selection, !repo.isEmpty {
                 let repo = repo
@@ -280,13 +286,13 @@ final class AppModel {
         generation += 1
         self.client = client
         auth = .signedIn
+        Task { await loadSettings() }
         startStream(client)
     }
 
     private func startStream(_ client: APIClient) {
         let generation = generation
         stream = Task { [weak self] in
-            await self?.loadSettings()
             do {
                 for try await update in client.events() {
                     guard let self, self.generation == generation else { return }

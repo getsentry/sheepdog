@@ -25,6 +25,7 @@ private struct SettingsForm: View {
     @State private var isSaving = false
     @State private var saved = false
     @State private var isPickerOpen = false
+    @State private var isSigningOutEverywhere = false
 
     var body: some View {
         Form {
@@ -70,8 +71,13 @@ private struct SettingsForm: View {
             HStack {
                 Spacer()
                 Button("Sign out on all devices") {
-                    Task { await model.signOutEverywhere() }
+                    isSigningOutEverywhere = true
+                    Task {
+                        await model.signOutEverywhere()
+                        isSigningOutEverywhere = false
+                    }
                 }
+                .disabled(isSigningOutEverywhere)
                 Button("Sign out") {
                     Task { await model.signOut() }
                 }

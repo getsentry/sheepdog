@@ -259,6 +259,7 @@ private func signedIn(
     #expect(model.settingsError == "Internal server error")
     #expect(tokens.value == "A")
     #expect(await until { seen.withLock { $0.filter { $0.hasSuffix("/api/events") }.count } == 2 })
+    #expect(model.settingsError == "Internal server error")
 
     fails.withLock { $0 = false }
     await model.signOutEverywhere()
@@ -266,6 +267,69 @@ private func signedIn(
     #expect(model.signInError == nil)
     #expect(tokens.value == nil)
     #expect(seen.withLock { $0.filter { $0.hasSuffix("/api/sessions") } } == ["Bearer A DELETE /api/sessions", "Bearer A DELETE /api/sessions"])
+}
+
+@MainActor
+@Test func refusedSavedAddressDeletesTheSessionToken() async {
+    let tokens = MemoryTokens("A")
+    let model = AppModel(tokens: tokens.store)
+    model.serverURL = "http://box.tailnet.ts.net:8080"
+    await model.start()
+    #expect(model.auth == .signedOut)
+    #expect(model.signInError == "Use https:// for box.tailnet.ts.net. Plain http:// works only for localhost and IP addresses.")
+    #expect(tokens.value == nil)
+}
+
+@MainActor
+@Test func repositoriesLoadAgainAfterAFailure() async {
+    let reconnect = Gate()
+    let loads = Mutex(0)
+    let (model, _) = await signedIn(sleep: reconnectOnce(after: reconnect)) { request in
+        guard request.path == "/api/repos" else { return nil }
+        return switch loads.withLock({ $0 += 1; return $0 }) {
+        case 1, 2: error(502, "GitHub is not available")
+        default: Reply(status: 200, body: #"["acme/app"]"#)
+        }
+    }
+    #expect(await until { model.requests != nil })
+    await model.loadRepositories()
+    #expect(model.repositoriesError == "GitHub is not available")
+    // The dropdown opens again.
+    await model.loadRepositories()
+    #expect(loads.withLock { $0 } == 2)
+    #expect(model.repositories == nil)
+
+    await reconnect.open()
+    #expect(await until { model.repositories == ["acme/app"] })
+    #expect(model.repositoriesError == nil)
+    await model.signOut()
+}
+
+@MainActor
+@Test func reviewReloadKeepsReviewErrors() async {
+    let gate = Gate()
+    let calls = Mutex(0)
+    let (model, _) = await signedIn { request in
+        guard request.path == "/api/repos/acme/app/pulls/1/review" else { return nil }
+        guard calls.withLock({ $0 += 1; return $0 }) > 1 else { return error(404, "No review") }
+        await gate.wait()
+        return Reply(status: 200, body: reviewJSON("Old", createdAt: "2026-11-16T09:00:00Z"))
+    }
+    model.apply(.review(API.ReviewOutcome(repo: "acme/app", number: 1, review: nil, error: "Invalid API key")))
+    await model.loadReview(repo: "acme/app", number: 1)
+    #expect(model.reviewErrors["acme/app#1"] == "Invalid API key")
+
+    let load = Task { await model.loadReview(repo: "acme/app", number: 1) }
+    #expect(await until { calls.withLock { $0 } == 2 })
+    model.apply(.review(API.ReviewOutcome(repo: "acme/app", number: 1, review: nil, error: "GitHub: Not Found")))
+    await gate.open()
+    await load.value
+    #expect(model.reviews["acme/app#1"]?.summary == "Old")
+    #expect(model.reviewErrors["acme/app#1"] == "GitHub: Not Found")
+
+    await model.loadReview(repo: "acme/app", number: 1)
+    #expect(model.reviewErrors.isEmpty)
+    await model.signOut()
 }
 
 // C8

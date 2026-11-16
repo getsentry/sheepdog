@@ -131,6 +131,7 @@ private struct RepoPicker: View {
                 guard name.caseInsensitiveCompare(model.repo) != .orderedSame else { return }
                 Task { await model.selectRepo(name) }
             }
+            .task { await model.loadRepositories() }
         }
     }
 }
