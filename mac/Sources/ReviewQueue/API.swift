@@ -94,6 +94,19 @@ enum API {
         let createdAt: Date
     }
 
+    // A danger score from 1 (no danger, can be merged) to 10 (extreme danger).
+    struct Classification: Decodable, Equatable, Sendable {
+        let repo: String
+        let number: Int
+        let headSha: String
+        let model: String
+        let score: Int
+        let reason: String
+        let diffTruncated: Bool
+        let prUpdatedAt: Date
+        let createdAt: Date
+    }
+
     struct RunningTask: Decodable, Equatable, Identifiable, Sendable {
         let id: String
         let kind: String
@@ -111,10 +124,19 @@ enum API {
         let error: String?
     }
 
+    // The end of a classification task. A cancelled classification sends no outcome.
+    struct ClassificationOutcome: Decodable, Equatable, Sendable {
+        let repo: String
+        let number: Int
+        let classification: Classification?
+        let error: String?
+    }
+
     enum Event: Equatable, Sendable {
         case requests(Requests)
         case tasks([RunningTask])
         case review(ReviewOutcome)
+        case classification(ClassificationOutcome)
 
         // nil for an event name that this client does not know.
         init?(_ message: SSEMessage) throws {
@@ -123,6 +145,7 @@ enum API {
             case "requests": self = .requests(try API.decode(Requests.self, from: data))
             case "tasks": self = .tasks(try API.decode([RunningTask].self, from: data))
             case "review": self = .review(try API.decode(ReviewOutcome.self, from: data))
+            case "classification": self = .classification(try API.decode(ClassificationOutcome.self, from: data))
             default: return nil
             }
         }
@@ -263,6 +286,19 @@ struct APIClient: Sendable {
 
     func startReview(repo: String, number: Int) async throws -> API.RunningTask {
         try API.decode(API.RunningTask.self, from: try await send("POST", "api/repos/\(repo)/pulls/\(number)/review"))
+    }
+
+    // nil when the PR has no stored classification.
+    func classification(repo: String, number: Int) async throws -> API.Classification? {
+        do {
+            return try API.decode(API.Classification.self, from: try await send("GET", "api/repos/\(repo)/pulls/\(number)/classification"))
+        } catch APIError.server(status: 404, _) {
+            return nil
+        }
+    }
+
+    func startClassification(repo: String, number: Int) async throws -> API.RunningTask {
+        try API.decode(API.RunningTask.self, from: try await send("POST", "api/repos/\(repo)/pulls/\(number)/classification"))
     }
 
     func tasks() async throws -> [API.RunningTask] {

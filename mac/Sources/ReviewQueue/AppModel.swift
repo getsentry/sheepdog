@@ -55,6 +55,9 @@ final class AppModel {
     var reviews: [String: API.Review] = [:]
     var reviewErrors: [String: String] = [:]
     private(set) var startingReviews: Set<String> = []
+    var classifications: [String: API.Classification] = [:]
+    var classificationErrors: [String: String] = [:]
+    private(set) var startingClassifications: Set<String> = []
 
     @ObservationIgnored private let session: URLSession
     @ObservationIgnored private let tokens: TokenStore
@@ -231,6 +234,43 @@ final class AppModel {
         }
     }
 
+    // Works as loadReview does.
+    func loadClassification(repo: String, number: Int) async {
+        let key = Self.key(repo: repo, number: number)
+        let previousError = classificationErrors[key]
+        do {
+            guard let classification = try await checked({ try await $0.classification(repo: repo, number: number) }) else { return }
+            if classification.createdAt >= classifications[key]?.createdAt ?? .distantPast {
+                classifications[key] = classification
+            }
+            if classificationErrors[key] == previousError { classificationErrors[key] = nil }
+        } catch is CancellationError {
+        } catch {
+            classificationErrors[key] = error.localizedDescription
+        }
+    }
+
+    func isClassifying(repo: String, number: Int) -> Bool {
+        let key = Self.key(repo: repo, number: number)
+        return startingClassifications.contains(key) || tasks.contains { $0.kind == "classify" && $0.key.lowercased() == key }
+    }
+
+    func startClassification(repo: String, number: Int) async {
+        let key = Self.key(repo: repo, number: number)
+        guard !isClassifying(repo: repo, number: number) else { return }
+        classificationErrors[key] = nil
+        startingClassifications.insert(key)
+        defer { startingClassifications.remove(key) }
+        let version = tasksVersion
+        do {
+            let task = try await checked { try await $0.startClassification(repo: repo, number: number) }
+            if version == tasksVersion, !tasks.contains(where: { $0.id == task.id }) { tasks.append(task) }
+        } catch is CancellationError {
+        } catch {
+            classificationErrors[key] = error.localizedDescription
+        }
+    }
+
     func cancelTask(_ id: String) async {
         error = nil
         do {
@@ -260,6 +300,14 @@ final class AppModel {
             } else if let message = outcome.error {
                 reviewErrors[key] = message
             }
+        case .classification(let outcome):
+            let key = Self.key(repo: outcome.repo, number: outcome.number)
+            if let classification = outcome.classification {
+                classifications[key] = classification
+                classificationErrors[key] = nil
+            } else if let message = outcome.error {
+                classificationErrors[key] = message
+            }
         }
     }
 
@@ -270,10 +318,11 @@ final class AppModel {
             if repositoriesError != nil {
                 Task { await loadRepositories() }
             }
-            // The server does not send again the review events that the client missed while the stream was down.
+            // The server does not send again the review and classification events that the client missed while the stream was down.
             if let number = selection, !repo.isEmpty {
                 let repo = repo
                 Task { await loadReview(repo: repo, number: number) }
+                Task { await loadClassification(repo: repo, number: number) }
             }
         case .disconnected(let message):
             connectionError = "No connection to the server. \(message)"
@@ -329,6 +378,9 @@ final class AppModel {
         reviews = [:]
         reviewErrors = [:]
         startingReviews = []
+        classifications = [:]
+        classificationErrors = [:]
+        startingClassifications = []
         signInError = message
         auth = .signedOut
     }

@@ -6,7 +6,7 @@ import Testing
 private let start = Date(timeIntervalSince1970: 1_800_000_000)
 
 private func task(_ key: String) -> API.RunningTask {
-    API.RunningTask(id: "T1", kind: "review", key: key, title: "AI review of #6773", subtitle: "getsentry/sentry-react-native", startedAt: start)
+    API.RunningTask(id: "T1", kind: "review", key: key, title: "Review of #6773", subtitle: "getsentry/sentry-react-native", startedAt: start)
 }
 
 private let review = API.Review(
@@ -74,7 +74,7 @@ data: {"repo":"acme/app","fetchedAt":null,"rows":[]}
 
 
 """
-private let taskJSON = #"{"id":"T1","kind":"review","key":"acme/app#1","title":"AI review of #1","subtitle":"acme/app","startedAt":"2026-11-16T10:00:00Z"}"#
+private let taskJSON = #"{"id":"T1","kind":"review","key":"acme/app#1","title":"Review of #1","subtitle":"acme/app","startedAt":"2026-11-16T10:00:00Z"}"#
 private let notAllowed = "This GitHub account is not allowed on this server"
 
 private func reviewJSON(_ summary: String, createdAt: String) -> String {
@@ -420,6 +420,53 @@ private func signedIn(
     #expect(!model.isReviewing(repo: "acme/app", number: 1))
     #expect(model.tasks.isEmpty)
     #expect(model.reviewErrors["acme/app#1"] == "GitHub: Not Found")
+    await model.signOut()
+}
+
+@MainActor
+@Test func classificationEventsAreSeparateFromReviews() {
+    let model = AppModel(tokens: MemoryTokens(nil).store)
+    let repo = "getsentry/sentry-react-native"
+    let classifying = API.RunningTask(id: "T2", kind: "classify", key: "\(repo)#6773", title: "Classification of #6773", subtitle: repo, startedAt: start)
+    model.apply(.tasks([classifying]))
+    #expect(model.isClassifying(repo: repo, number: 6773))
+    #expect(!model.isReviewing(repo: repo, number: 6773))
+
+    model.apply(.classification(API.ClassificationOutcome(repo: repo, number: 6773, classification: nil, error: "Invalid API key")))
+    #expect(model.classificationErrors["\(repo)#6773"] == "Invalid API key")
+    #expect(model.reviewErrors.isEmpty)
+
+    let classification = API.Classification(
+        repo: repo, number: 6773, headSha: "03da17f", model: "google/gemini-4-hydrogen",
+        score: 3, reason: "Only a dependency bump.", diffTruncated: false, prUpdatedAt: start, createdAt: start
+    )
+    model.apply(.classification(API.ClassificationOutcome(repo: repo, number: 6773, classification: classification, error: nil)))
+    model.apply(.tasks([]))
+    #expect(model.classifications["\(repo)#6773"] == classification)
+    #expect(model.classificationErrors.isEmpty)
+    #expect(model.reviews.isEmpty)
+    #expect(!model.isClassifying(repo: repo, number: 6773))
+}
+
+@MainActor
+@Test func classificationLoadsAndStarts() async {
+    let (model, _) = await signedIn { request in
+        switch (request.method, request.path) {
+        case ("GET", "/api/repos/acme/app/pulls/1/classification"):
+            return Reply(status: 200, body: #"{"repo":"acme/app","number":1,"headSha":"abc","model":"m","score":8,"reason":"Touches auth.","diffTruncated":true,"prUpdatedAt":"2026-11-16T10:00:00Z","createdAt":"2026-11-16T10:30:12.345Z"}"#)
+        case ("POST", "/api/repos/acme/app/pulls/2/classification"):
+            return error(409, "A classification of this pull request is already running")
+        default:
+            return nil
+        }
+    }
+    #expect(await until { model.requests != nil })
+    await model.loadClassification(repo: "acme/app", number: 1)
+    #expect(model.classifications["acme/app#1"]?.score == 8)
+    #expect(model.classifications["acme/app#1"]?.diffTruncated == true)
+    await model.startClassification(repo: "acme/app", number: 2)
+    #expect(model.classificationErrors["acme/app#2"] == "A classification of this pull request is already running")
+    #expect(model.reviewErrors.isEmpty)
     await model.signOut()
 }
 

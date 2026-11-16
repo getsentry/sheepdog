@@ -21,6 +21,14 @@ struct PRDetailView: View {
                     }
                     if let detail {
                         facts(detail)
+                        if let classificationError {
+                            Text(classificationError)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
+                        if let classification {
+                            ClassificationSection(classification: classification, prUpdatedAt: row.updatedAt)
+                        }
                         if let reviewError {
                             Text(reviewError)
                                 .foregroundStyle(.red)
@@ -53,6 +61,9 @@ struct PRDetailView: View {
     private var review: API.Review? { model.reviews[key] }
     private var reviewError: String? { model.reviewErrors[key] }
     private var isReviewing: Bool { model.isReviewing(repo: repo, number: row.number) }
+    private var classification: API.Classification? { model.classifications[key] }
+    private var classificationError: String? { model.classificationErrors[key] }
+    private var isClassifying: Bool { model.isClassifying(repo: repo, number: row.number) }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -65,6 +76,22 @@ struct PRDetailView: View {
                 }
                 Spacer()
                 Button {
+                    Task { await model.startClassification(repo: repo, number: row.number) }
+                } label: {
+                    if isClassifying {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Classifying…")
+                        }
+                    } else if classification != nil {
+                        Text("Classify again")
+                    } else {
+                        Text("Classify")
+                    }
+                }
+                .disabled(detail == nil || isClassifying)
+                Button {
                     Task { await model.startReview(repo: repo, number: row.number) }
                 } label: {
                     if isReviewing {
@@ -76,7 +103,7 @@ struct PRDetailView: View {
                     } else if review != nil {
                         Text("Review again")
                     } else {
-                        Text("AI Review")
+                        Text("Review")
                     }
                 }
                 .disabled(detail == nil || isReviewing)
@@ -147,8 +174,10 @@ struct PRDetailView: View {
     private func load() async {
         do {
             async let review: Void = model.loadReview(repo: repo, number: row.number)
+            async let classification: Void = model.loadClassification(repo: repo, number: row.number)
             let fetched = try await model.pullRequest(repo: repo, number: row.number)
             await review
+            await classification
             guard !Task.isCancelled else { return }
             lines = bodyLines(fetched.body)
             detail = fetched
@@ -157,6 +186,61 @@ struct PRDetailView: View {
         } catch {
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
+        }
+    }
+}
+
+private struct ClassificationSection: View {
+    let classification: API.Classification
+    let prUpdatedAt: Date
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(verbatim: "\(classification.score)/10")
+                .font(.title2.bold().monospacedDigit())
+                .foregroundStyle(color)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(label)
+                        .font(.headline)
+                    Spacer()
+                    Text("\(classification.model), \(classification.createdAt.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if prUpdatedAt > classification.prUpdatedAt {
+                    Text("The PR changed after this classification.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                if classification.diffTruncated {
+                    Text("The diff was too large. The model saw only the first 200,000 characters.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Text(classification.reason)
+            }
+        }
+        .textSelection(.enabled)
+        .padding(12)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var color: Color {
+        switch classification.score {
+        case ...3: .green
+        case 4...6: .orange
+        default: .red
+        }
+    }
+
+    private var label: String {
+        switch classification.score {
+        case 1: "No danger, can be merged"
+        case 2...3: "Low danger"
+        case 4...6: "Medium danger"
+        case 7...9: "High danger"
+        default: "Extreme danger"
         }
     }
 }
