@@ -1,0 +1,70 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"reviewqueue/internal/config"
+	"reviewqueue/internal/store"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "reviewqueue:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		return err
+	}
+
+	db, err := store.Open(cfg.DBPath, cfg.SecretKey)
+	if err != nil {
+		return fmt.Errorf("open database %s: %w", cfg.DBPath, err)
+	}
+	defer db.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	server := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           http.NewServeMux(),
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
+
+	serveErr := make(chan error, 1)
+	go func() {
+		log.Printf("listening on %s", cfg.Addr)
+		serveErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+	}
+
+	log.Print("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+	if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
