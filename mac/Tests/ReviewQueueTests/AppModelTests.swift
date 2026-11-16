@@ -306,6 +306,28 @@ private func signedIn(
 }
 
 @MainActor
+@Test func concurrentRepositoryLoadsSendOneRequest() async {
+    let gate = Gate()
+    let loads = Mutex(0)
+    let (model, _) = await signedIn { request in
+        guard request.path == "/api/repos" else { return nil }
+        loads.withLock { $0 += 1 }
+        await gate.wait()
+        return Reply(status: 200, body: #"["acme/app"]"#)
+    }
+    #expect(await until { model.requests != nil })
+    async let first: Void = model.loadRepositories()
+    #expect(await until { loads.withLock { $0 } == 1 })
+    await model.loadRepositories()
+    await gate.open()
+    await first
+    #expect(loads.withLock { $0 } == 1)
+    #expect(model.repositories == ["acme/app"])
+    #expect(model.repositoriesError == nil)
+    await model.signOut()
+}
+
+@MainActor
 @Test func reviewReloadKeepsReviewErrors() async {
     let gate = Gate()
     let calls = Mutex(0)

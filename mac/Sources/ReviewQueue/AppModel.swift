@@ -42,6 +42,7 @@ final class AppModel {
     var modelsError: String?
     var repositories: [String]?
     var repositoriesError: String?
+    private var isLoadingRepositories = false
     // The last poll of the server. nil until the event stream sends it.
     var requests: API.Requests?
     var selection: API.Row.ID?
@@ -173,8 +174,11 @@ final class AppModel {
         }
     }
 
+    // The window and the dropdown both start a load, and a late failure must not hide a list that loaded.
     func loadRepositories() async {
-        guard repositories == nil else { return }
+        guard repositories == nil, !isLoadingRepositories else { return }
+        isLoadingRepositories = true
+        defer { isLoadingRepositories = false }
         repositoriesError = nil
         do {
             repositories = try await checked { try await $0.repos() }
