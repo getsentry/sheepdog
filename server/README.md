@@ -64,10 +64,11 @@ The server stops on SIGINT or SIGTERM. It cancels the running AI reviews. Finish
 
 ## TLS
 
-The server itself does not use TLS. GitHub tokens and session tokens go over the network, so never make the plain HTTP port reachable from other computers. Use one of these two setups:
+The server itself does not use TLS. GitHub tokens and session tokens go over the network, so never make the plain HTTP port reachable from other computers. Use one of these setups:
 
 - Keep the default address `127.0.0.1:8080`, and put a reverse proxy with TLS in front of the server.
-- Listen only on a [Tailscale](https://tailscale.com) address. Tailscale encrypts the traffic between your devices.
+- Keep the default address, and run `tailscale serve --bg 8080` on the same computer. [Tailscale](https://tailscale.com) then serves the server at `https://<computer>.<tailnet>.ts.net` with a certificate, only to your tailnet. HTTPS certificates must be on in the DNS settings of the tailnet.
+- Listen only on a Tailscale IP address, for example `REVIEWQ_ADDR=100.101.102.103:8080`. Tailscale encrypts the traffic between your devices. Clients then use the IP address, for example `http://100.101.102.103:8080`.
 
 This [Caddy](https://caddyserver.com) configuration gets a certificate for the domain and sends all requests to the server. `flush_interval -1` sends live events to the clients at once.
 
@@ -78,6 +79,8 @@ reviewqueue.example.com {
 	}
 }
 ```
+
+The Mac app accepts plain `http://` only for `localhost`, `127.0.0.1`, `::1`, and other IP addresses, because macOS blocks plain HTTP to host names. For a host name, for example a Tailscale name, the server address must start with `https://`.
 
 After 10 failed sign-ins in a minute from one client IP address, the server rejects sign-ins from that address with status 429 for the rest of the minute. Successful sign-ins do not count. If the connection comes from a loopback address, for example from a reverse proxy on the same computer, the server uses the last address in the `X-Forwarded-For` header as the client address. Caddy sets this header by default. The server ignores the header on other connections, for example on a Tailscale address.
 

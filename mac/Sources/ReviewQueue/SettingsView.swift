@@ -2,17 +2,11 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var apiKey = ""
-    @State private var isSaving = false
-    @State private var saved = false
-    @State private var models: [String]?
-    @State private var modelsError: String?
-    @State private var isPickerOpen = false
 
     var body: some View {
         Group {
             if model.auth == .signedIn {
-                form
+                SettingsForm()
             } else {
                 Text("Sign in to change the settings.")
                     .foregroundStyle(.secondary)
@@ -22,8 +16,17 @@ struct SettingsView: View {
         .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
     }
+}
 
-    private var form: some View {
+// Exists only while signed in, so that no state of one user stays for the next user.
+private struct SettingsForm: View {
+    @Environment(AppModel.self) private var model
+    @State private var apiKey = ""
+    @State private var isSaving = false
+    @State private var saved = false
+    @State private var isPickerOpen = false
+
+    var body: some View {
         Form {
             // The address stays fixed while signed in, so that the session token never goes to another server.
             LabeledContent("Server address", value: model.serverURL)
@@ -52,20 +55,23 @@ struct SettingsView: View {
                 }
                 .disabled(model.settings?.hasOpenRouterKey != true)
                 .popover(isPresented: $isPickerOpen, arrowEdge: .bottom) {
-                    SearchList(prompt: "Search models", items: models, error: modelsError) { id in
+                    SearchList(prompt: "Search models", items: model.models, error: model.modelsError) { id in
                         isPickerOpen = false
                         Task { await model.selectModel(id) }
                     }
-                    .task { await loadModels() }
+                    .task { await model.loadModels() }
                 }
             }
-            if let error = model.error {
+            if let error = model.settingsError {
                 Text(error)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
             }
             HStack {
                 Spacer()
+                Button("Sign out on all devices") {
+                    Task { await model.signOutEverywhere() }
+                }
                 Button("Sign out") {
                     Task { await model.signOut() }
                 }
@@ -83,19 +89,8 @@ struct SettingsView: View {
             if await model.saveOpenRouterKey(apiKey) {
                 apiKey = ""
                 saved = true
-                models = nil
             }
             isSaving = false
-        }
-    }
-
-    private func loadModels() async {
-        guard models == nil else { return }
-        modelsError = nil
-        do {
-            models = try await model.models()
-        } catch {
-            modelsError = error.localizedDescription
         }
     }
 }

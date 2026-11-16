@@ -153,6 +153,7 @@ struct PRDetailView: View {
             lines = bodyLines(fetched.body)
             detail = fetched
             error = nil
+        } catch is CancellationError {
         } catch {
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription

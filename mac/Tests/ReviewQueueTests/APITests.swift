@@ -14,6 +14,8 @@ private let taskJSON = #"{"id":"S6L32X34DAKG7WI2CRMWGRYNTT","kind":"review","key
 private let noReviewJSON = #"{"error":"This pull request has no review"}"#
 private let runningJSON = #"{"error":"A review of this pull request is already running"}"#
 private let badSessionJSON = #"{"error":"The session is not valid. Sign in again"}"#
+private let notAllowedJSON = #"{"error":"This GitHub account is not allowed on this server"}"#
+private let tooManyStreamsJSON = #"{"error":"Too many open event streams. Close another client and try again"}"#
 // The live server had no valid OpenRouter key, so this review follows the encoding of store.Review in Go.
 private let reviewJSON = #"{"repo":"getsentry/sentry-react-native","number":6773,"headSha":"03da17fea404491d637aeeacdfad4539ec229c7f","model":"google/gemini-4-hydrogen","risk":"yellow","summary":"Updates the JavaScript SDK.","findings":[{"severity":"medium","file":"package.json","title":"Major version","detail":"Version 11 has breaking changes."}],"diffTruncated":false,"prUpdatedAt":"2026-11-16T08:20:44Z","createdAt":"2026-11-16T11:30:12.345+01:00"}"#
 
@@ -167,61 +169,6 @@ private func date(_ text: String) throws -> Date {
     #expect((0..<6).map(APIClient.reconnectDelay(attempt:)) == [.seconds(2), .seconds(4), .seconds(8), .seconds(30), .seconds(30), .seconds(30)])
 }
 
-private struct Reply: Sendable {
-    let status: Int
-    let body: String
-}
-
-private struct Seen: Sendable {
-    let method: String
-    let path: String
-    let authorization: String?
-    let body: Data?
-}
-
-// Each test registers its own host, so that tests can run in parallel.
-private final class MockProtocol: URLProtocol, @unchecked Sendable {
-    typealias Handler = @Sendable (Seen) -> Reply
-    private static let handlers = Mutex<[String: Handler]>([:])
-
-    static func client(token: String?, handler: @escaping Handler, sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in }) -> APIClient {
-        let host = "h\(UUID().uuidString.lowercased()).test"
-        handlers.withLock { $0[host] = handler }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockProtocol.self]
-        return APIClient(baseURL: URL(string: "http://\(host)")!, sessionToken: token, session: URLSession(configuration: configuration), sleep: sleep)
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func stopLoading() {}
-
-    override func startLoading() {
-        let url = request.url!
-        let handler = Self.handlers.withLock { $0[url.host()!] }!
-        let reply = handler(Seen(method: request.httpMethod ?? "", path: url.path(), authorization: request.value(forHTTPHeaderField: "Authorization"), body: bodyData()))
-        let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(reply.body.utf8))
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    // URLSession moves httpBody into a stream before the protocol sees it.
-    private func bodyData() -> Data? {
-        guard let stream = request.httpBodyStream else { return request.httpBody }
-        stream.open()
-        defer { stream.close() }
-        var data = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while stream.hasBytesAvailable {
-            let count = stream.read(&buffer, maxLength: buffer.count)
-            guard count > 0 else { break }
-            data.append(buffer, count: count)
-        }
-        return data
-    }
-}
-
 private func json(_ data: Data?) throws -> [String: String] {
     try JSONDecoder().decode([String: String].self, from: data ?? Data())
 }
@@ -240,7 +187,8 @@ private func json(_ data: Data?) throws -> [String: String] {
         case ("GET", "/api/repos/getsentry/sentry-react-native/pulls/6773/review"): return Reply(status: 200, body: reviewJSON)
         case ("POST", "/api/repos/getsentry/sentry-react-native/pulls/6773/review"): return Reply(status: 202, body: taskJSON)
         case ("GET", "/api/tasks"): return Reply(status: 200, body: "[\(taskJSON)]")
-        case ("DELETE", "/api/tasks/S6L32X34DAKG7WI2CRMWGRYNTT"), ("DELETE", "/api/session"): return Reply(status: 204, body: "")
+        case ("DELETE", "/api/tasks/S6L32X34DAKG7WI2CRMWGRYNTT"), ("DELETE", "/api/session"), ("DELETE", "/api/sessions"):
+            return Reply(status: 204, body: "")
         default: return Reply(status: 418, body: #"{"error":"unexpected"}"#)
         }
     }
@@ -257,9 +205,11 @@ private func json(_ data: Data?) throws -> [String: String] {
     #expect(try await client.tasks().count == 1)
     try await client.cancelTask(id: "S6L32X34DAKG7WI2CRMWGRYNTT")
     try await client.signOut()
+    try await client.signOutEverywhere()
 
     let requests = seen.withLock { $0 }
-    #expect(requests.count == 12)
+    #expect(requests.count == 13)
+    #expect(requests.last.map { "\($0.method) \($0.path)" } == "DELETE /api/sessions")
     #expect(requests.allSatisfy { $0.authorization == "Bearer abc" })
     let update = try #require(requests.first { $0.method == "PUT" })
     #expect(try json(update.body) == ["model": "google/gemini-4-hydrogen", "openRouterKey": ""])
@@ -292,6 +242,9 @@ private func json(_ data: Data?) throws -> [String: String] {
         try await client.startReview(repo: "acme/app", number: 1)
     }
     await #expect(throws: APIError.server(status: 502, message: "The server returned HTTP 502")) { try await client.models() }
+    #expect(APIError(status: 403, data: Data(notAllowedJSON.utf8)) == .forbidden("This GitHub account is not allowed on this server"))
+    #expect(APIError.forbidden("x").endsSession && APIError.unauthorized("x").endsSession)
+    #expect(!APIError.server(status: 429, message: "x").endsSession)
     #expect(try await client.review(repo: "acme/app", number: 1) == nil)
     #expect(APIError.unauthorized("Sign in first").localizedDescription == "Sign in first")
 }
@@ -313,11 +266,47 @@ private func json(_ data: Data?) throws -> [String: String] {
         return replies.withLock { $0.removeFirst() }
     }, sleep: { duration in sleeps.withLock { $0.append(duration) } })
 
-    var events: [API.Event] = []
+    var updates: [StreamUpdate] = []
     await #expect(throws: APIError.unauthorized("The session is not valid. Sign in again")) {
-        for try await event in client.events() { events.append(event) }
+        for try await update in client.events() { updates.append(update) }
     }
-    #expect(events == [.tasks([]), .tasks([try API.decode(API.RunningTask.self, from: Data(taskJSON.utf8))])])
+    #expect(updates == [
+        .connected,
+        .event(.tasks([])),
+        .disconnected("Internal server error"),
+        .disconnected("The server returned HTTP 500"),
+        .disconnected("The server returned HTTP 502"),
+        .disconnected("The server returned HTTP 502"),
+        .connected,
+        .event(.tasks([try API.decode(API.RunningTask.self, from: Data(taskJSON.utf8))])),
+    ])
     #expect(sleeps.withLock { $0 } == [.seconds(2), .seconds(4), .seconds(8), .seconds(30), .seconds(30), .seconds(2)])
     #expect(paths.withLock { $0 } == Array(repeating: "Bearer abc /api/events", count: 7))
+}
+
+// C12 and the 429 and 403 replies of the server.
+@Test func eventStreamSkipsBadEventsWaitsOn429AndStopsOn403() async throws {
+    let replies = Mutex([
+        Reply(status: 200, body: "event: tasks\ndata: [{\"id\":1}]\n\nevent: tasks\ndata: [\(taskJSON)]\n\n"),
+        Reply(status: 429, body: tooManyStreamsJSON),
+        Reply(status: 200, body: "event: tasks\ndata: []\n\n"),
+        Reply(status: 403, body: notAllowedJSON),
+    ])
+    let sleeps = Mutex<[Duration]>([])
+    let client = MockProtocol.client(token: "abc", handler: { _ in
+        replies.withLock { $0.removeFirst() }
+    }, sleep: { duration in sleeps.withLock { $0.append(duration) } })
+
+    var updates: [StreamUpdate] = []
+    await #expect(throws: APIError.forbidden("This GitHub account is not allowed on this server")) {
+        for try await update in client.events() { updates.append(update) }
+    }
+    #expect(updates == [
+        .connected,
+        .event(.tasks([try API.decode(API.RunningTask.self, from: Data(taskJSON.utf8))])),
+        .disconnected("Too many open event streams. Close another client and try again"),
+        .connected,
+        .event(.tasks([])),
+    ])
+    #expect(sleeps.withLock { $0 } == [.seconds(2), .seconds(30), .seconds(2)])
 }

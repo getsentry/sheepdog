@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let log = Logger(subsystem: "com.alwx.reviewqueue", category: "server")
 
 // The JSON types of the Review Queue server.
 enum API {
@@ -146,19 +149,39 @@ enum API {
 enum APIError: LocalizedError, Equatable {
     // The session or the GitHub token is not valid. The client must sign in again.
     case unauthorized(String)
+    // The GitHub account is no longer on the allowlist of the server.
+    case forbidden(String)
     case server(status: Int, message: String)
 
     init(status: Int, data: Data) {
         struct Failure: Decodable { let error: String }
         let message = (try? JSONDecoder().decode(Failure.self, from: data))?.error ?? "The server returned HTTP \(status)"
-        self = status == 401 ? .unauthorized(message) : .server(status: status, message: message)
+        switch status {
+        case 401: self = .unauthorized(message)
+        case 403: self = .forbidden(message)
+        default: self = .server(status: status, message: message)
+        }
+    }
+
+    var endsSession: Bool {
+        switch self {
+        case .unauthorized, .forbidden: true
+        case .server: false
+        }
     }
 
     var errorDescription: String? {
         switch self {
-        case .unauthorized(let message), .server(_, let message): message
+        case .unauthorized(let message), .forbidden(let message), .server(_, let message): message
         }
     }
+}
+
+enum StreamUpdate: Equatable, Sendable {
+    case connected
+    case event(API.Event)
+    // The stream failed and connects again after a delay.
+    case disconnected(String)
 }
 
 struct APIClient: Sendable {
@@ -186,6 +209,10 @@ struct APIClient: Sendable {
 
     func signOut() async throws {
         _ = try await send("DELETE", "api/session")
+    }
+
+    func signOutEverywhere() async throws {
+        _ = try await send("DELETE", "api/sessions")
     }
 
     func me() async throws -> String {
@@ -250,25 +277,26 @@ struct APIClient: Sendable {
         [.seconds(2), .seconds(4), .seconds(8)].dropFirst(attempt).first ?? .seconds(30)
     }
 
-    // The stream connects again after a drop and ends with an error on 401 or on an event it cannot decode.
-    func events() -> AsyncThrowingStream<API.Event, any Error> {
+    // The stream connects again after a drop and ends with an error on 401 or 403.
+    func events() -> AsyncThrowingStream<StreamUpdate, any Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 var attempt = 0
                 while !Task.isCancelled {
+                    var delay: Duration?
                     do {
                         try await readEvents(into: continuation, attempt: &attempt)
-                    } catch let error as APIError {
-                        if case .unauthorized = error {
-                            continuation.finish(throwing: error)
-                            return
-                        }
-                    } catch let error as DecodingError {
+                    } catch let error as APIError where error.endsSession {
                         continuation.finish(throwing: error)
                         return
-                    } catch {}
+                    } catch {
+                        guard !Task.isCancelled else { break }
+                        continuation.yield(.disconnected(error.localizedDescription))
+                        // Too many open streams: a fast retry cannot succeed before another client closes its stream.
+                        if case APIError.server(status: 429, _) = error { delay = .seconds(30) }
+                    }
                     do {
-                        try await sleep(Self.reconnectDelay(attempt: attempt))
+                        try await sleep(delay ?? Self.reconnectDelay(attempt: attempt))
                     } catch {
                         break
                     }
@@ -280,7 +308,7 @@ struct APIClient: Sendable {
         }
     }
 
-    private func readEvents(into continuation: AsyncThrowingStream<API.Event, any Error>.Continuation, attempt: inout Int) async throws {
+    private func readEvents(into continuation: AsyncThrowingStream<StreamUpdate, any Error>.Continuation, attempt: inout Int) async throws {
         var request = makeRequest("GET", "api/events")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let (bytes, response) = try await session.bytes(for: request)
@@ -290,11 +318,20 @@ struct APIClient: Sendable {
             for try await byte in bytes { data.append(byte) }
             throw APIError(status: status, data: data)
         }
+        continuation.yield(.connected)
         var parser = SSEParser()
         for try await byte in bytes {
-            guard let message = parser.push(byte), let event = try API.Event(message) else { continue }
+            guard let message = parser.push(byte) else { continue }
+            let event: API.Event?
+            do {
+                event = try API.Event(message)
+            } catch {
+                log.error("skip a \(message.event, privacy: .public) event that does not decode: \(error.localizedDescription, privacy: .public)")
+                continue
+            }
+            guard let event else { continue }
             attempt = 0
-            continuation.yield(event)
+            continuation.yield(.event(event))
         }
     }
 

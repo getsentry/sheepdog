@@ -20,6 +20,8 @@ scripts/bundle.sh
 open build/ReviewQueue.app
 ```
 
-To sign in, enter the server address, for example `http://127.0.0.1:8080`, and a GitHub classic personal access token with the scopes `repo` and `read:org`. The "Create token on GitHub" button opens the GitHub page for a new token with these scopes. The app sends the token to the server once and does not store it.
+To sign in, enter the server address and a GitHub classic personal access token with the scopes `repo` and `read:org`. The "Create token on GitHub" button opens the GitHub page for a new token with these scopes. The app sends the token to the server once and does not store it.
 
-The app stores the session token of the server in the Keychain (service `com.alwx.reviewqueue`, account `session-token`) and the server address in user defaults (`serverURL`). To use another server, click "Sign out" in Settings and enter the new address on the sign-in screen.
+The server address must start with `https://`, for example `https://reviews.example.com` or `https://box.tailnet.ts.net`. Plain `http://` works only for `localhost` and IP addresses, for example `http://127.0.0.1:8080` or the Tailscale IP address of the server, because macOS blocks plain HTTP to host names. See the TLS section of [server/README.md](../server/README.md).
+
+The app stores the session token of the server in the Keychain (service `com.alwx.reviewqueue`, account `session-token`) and the server address in user defaults (`serverURL`). To use another server, click "Sign out" in Settings and enter the new address on the sign-in screen. "Sign out on all devices" ends every session of your account on the server, for example after you lose a device.

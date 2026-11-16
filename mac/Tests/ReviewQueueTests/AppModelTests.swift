@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import ReviewQueue
 
@@ -15,7 +16,7 @@ private let review = API.Review(
 
 @MainActor
 @Test func eventsUpdateTheModel() {
-    let model = AppModel()
+    let model = AppModel(tokens: MemoryTokens(nil).store)
     let repo = "getsentry/sentry-react-native"
     model.apply(.requests(API.Requests(repo: repo, fetchedAt: start, rows: [], error: nil)))
     #expect(model.repo == repo)
@@ -37,10 +38,354 @@ private let review = API.Review(
 }
 
 @MainActor
-@Test func serverAddressNeedsSchemeAndHost() {
-    #expect(AppModel.serverAddress(" http://127.0.0.1:8080 ")?.absoluteString == "http://127.0.0.1:8080")
-    #expect(AppModel.serverAddress("https://reviews.example.com/")?.host() == "reviews.example.com")
-    #expect(AppModel.serverAddress("127.0.0.1:8080") == nil)
-    #expect(AppModel.serverAddress("ftp://example.com") == nil)
-    #expect(AppModel.serverAddress("") == nil)
+@Test func reviewKeysIgnoreCase() {
+    let model = AppModel(tokens: MemoryTokens(nil).store)
+    model.apply(.tasks([task("getsentry/sentry-react-native#6773")]))
+    #expect(model.isReviewing(repo: "GetSentry/Sentry-React-Native", number: 6773))
+    model.apply(.review(API.ReviewOutcome(repo: "getsentry/sentry-react-native", number: 6773, review: review, error: nil)))
+    #expect(model.reviews[AppModel.key(repo: "getsentry/Sentry-React-Native", number: 6773)] == review)
+}
+
+// C5
+@MainActor
+@Test func plainHTTPOnlyForLocalhostAndIPAddresses() throws {
+    for address in [" http://127.0.0.1:8080 ", "http://localhost:8080", "http://LocalHost", "http://[::1]:8080", "http://100.64.1.2:8080", "https://box.tailnet.ts.net", "HTTPS://reviews.example.com/"] {
+        #expect((try? AppModel.serverAddress(address)) != nil, "\(address)")
+    }
+    #expect(try AppModel.serverAddress("https://reviews.example.com/").host() == "reviews.example.com")
+
+    let hostName = #expect(throws: AddressError.self) { try AppModel.serverAddress("http://box.tailnet.ts.net:8080") }
+    #expect(hostName?.errorDescription == "Use https:// for box.tailnet.ts.net. Plain http:// works only for localhost and IP addresses.")
+    #expect(throws: AddressError.self) { try AppModel.serverAddress("http://127.1") }
+    for address in ["127.0.0.1:8080", "ftp://example.com", ""] {
+        let error = #expect(throws: AddressError.self) { try AppModel.serverAddress(address) }
+        #expect(error?.errorDescription?.hasPrefix("Enter the server address with https://") == true)
+    }
+}
+
+private let settingsJSON = #"{"repo":"acme/app","model":"a/model","hasOpenRouterKey":true}"#
+// The tasks event comes first here, so that a loaded requests event means that the first events are applied.
+private let streamBody = """
+event: tasks
+data: []
+
+event: requests
+data: {"repo":"acme/app","fetchedAt":null,"rows":[]}
+
+
+"""
+private let taskJSON = #"{"id":"T1","kind":"review","key":"acme/app#1","title":"AI review of #1","subtitle":"acme/app","startedAt":"2026-11-16T10:00:00Z"}"#
+private let notAllowed = "This GitHub account is not allowed on this server"
+
+private func reviewJSON(_ summary: String, createdAt: String) -> String {
+    #"{"repo":"acme/app","number":1,"headSha":"abc","model":"a/model","risk":"green","summary":"\#(summary)","findings":[],"diffTruncated":false,"prUpdatedAt":"2026-11-16T08:00:00Z","createdAt":"\#(createdAt)"}"#
+}
+
+private func error(_ status: Int, _ message: String) -> Reply {
+    Reply(status: status, body: #"{"error":"\#(message)"}"#)
+}
+
+private let neverReconnect: @Sendable (Duration) async throws -> Void = { _ in try await Task.sleep(for: .seconds(3600)) }
+
+// The first reconnect waits for the gate. Later reconnects wait until the stream ends.
+private func reconnectOnce(after gate: Gate) -> @Sendable (Duration) async throws -> Void {
+    let calls = Mutex(0)
+    return { _ in
+        if calls.withLock({ $0 += 1; return $0 }) == 1 {
+            await gate.wait()
+        } else {
+            try await Task.sleep(for: .seconds(3600))
+        }
+    }
+}
+
+// Starts a model with a stored session. A nil reply from the handler gives the usual reply of the server.
+@MainActor
+private func signedIn(
+    token: String = "A",
+    sleep: @escaping @Sendable (Duration) async throws -> Void = neverReconnect,
+    handler: @escaping @Sendable (Seen) async -> Reply?
+) async -> (AppModel, MemoryTokens) {
+    let (url, session) = MockProtocol.server { request in
+        if let reply = await handler(request) { return reply }
+        switch (request.method, request.path) {
+        case ("GET", "/api/events"): return Reply(status: 200, body: streamBody)
+        case (_, "/api/settings"): return Reply(status: 200, body: settingsJSON)
+        case ("DELETE", _): return Reply(status: 204, body: "")
+        default: return error(404, "Not found")
+        }
+    }
+    let tokens = MemoryTokens(token)
+    let model = AppModel(session: session, tokens: tokens.store, sleep: sleep)
+    model.serverURL = url.absoluteString
+    await model.start()
+    return (model, tokens)
+}
+
+// C1
+@MainActor
+@Test func cancelledReviewLoadLeavesNoError() async {
+    let gate = Gate()
+    let calls = Mutex(0)
+    let (model, _) = await signedIn { request in
+        guard request.path == "/api/repos/acme/app/pulls/1/review" else { return nil }
+        switch calls.withLock({ $0 += 1; return $0 }) {
+        case 1:
+            await gate.wait()
+            return Reply(status: 200, body: reviewJSON("Late", createdAt: "2026-11-16T09:00:00Z"))
+        case 2: return error(500, "Internal server error")
+        default: return Reply(status: 200, body: reviewJSON("Fine", createdAt: "2026-11-16T09:00:00Z"))
+        }
+    }
+    let load = Task { await model.loadReview(repo: "acme/app", number: 1) }
+    #expect(await until { calls.withLock { $0 } == 1 })
+    load.cancel()
+    await load.value
+    #expect(model.reviewErrors.isEmpty)
+    #expect(model.reviews.isEmpty)
+    await gate.open()
+
+    await model.loadReview(repo: "acme/app", number: 1)
+    #expect(model.reviewErrors["acme/app#1"] == "Internal server error")
+    await model.loadReview(repo: "acme/app", number: 1)
+    #expect(model.reviewErrors.isEmpty)
+    #expect(model.reviews["acme/app#1"]?.summary == "Fine")
+    await model.signOut()
+}
+
+// C2
+@MainActor
+@Test func reconnectReloadsTheReviewOfTheOpenPR() async {
+    let reconnect = Gate()
+    let stored = Mutex(reviewJSON("Old", createdAt: "2026-11-16T09:00:00Z"))
+    let connections = Mutex(0)
+    let (model, _) = await signedIn(sleep: reconnectOnce(after: reconnect)) { request in
+        switch request.path {
+        case "/api/events":
+            connections.withLock { $0 += 1 }
+            return nil
+        case "/api/repos/acme/app/pulls/1/review": return Reply(status: 200, body: stored.withLock { $0 })
+        default: return nil
+        }
+    }
+    #expect(await until { model.requests != nil })
+    model.selection = 1
+    await model.loadReview(repo: "acme/app", number: 1)
+    #expect(model.reviews["acme/app#1"]?.summary == "Old")
+
+    // The review finishes on the server while the stream is down.
+    stored.withLock { $0 = reviewJSON("New", createdAt: "2026-11-16T10:00:00Z") }
+    await model.loadReview(repo: "acme/app", number: 1)
+    #expect(model.reviews["acme/app#1"]?.summary == "New")
+    stored.withLock { $0 = reviewJSON("Newer", createdAt: "2026-11-16T11:00:00Z") }
+    await reconnect.open()
+    #expect(await until { model.reviews["acme/app#1"]?.summary == "Newer" })
+    #expect(connections.withLock { $0 } == 2)
+    await model.signOut()
+}
+
+// C3
+@MainActor
+@Test func lostConnectionIsShownUntilTheStreamIsBack() async {
+    let reconnect = Gate()
+    let connections = Mutex(0)
+    let (model, _) = await signedIn(sleep: reconnectOnce(after: reconnect)) { request in
+        guard request.path == "/api/events", connections.withLock({ $0 += 1; return $0 }) == 1 else { return nil }
+        return Reply(status: 502, body: "")
+    }
+    #expect(await until { model.connectionError != nil })
+    #expect(model.connectionError == "No connection to the server. The server returned HTTP 502")
+    #expect(model.error == nil)
+    await reconnect.open()
+    #expect(await until { model.requests != nil })
+    #expect(model.connectionError == nil)
+    await model.signOut()
+}
+
+// C4 and C11
+@MainActor
+@Test func signOutForgetsTheModelsOfTheUser() async {
+    let (model, tokens) = await signedIn { request in
+        switch (request.method, request.path) {
+        case ("GET", "/api/models"): Reply(status: 200, body: #"["a/model"]"#)
+        case ("PUT", "/api/settings"): error(500, "Disk full")
+        default: nil
+        }
+    }
+    await model.loadModels()
+    #expect(model.models == ["a/model"])
+    await model.selectModel("a/model")
+    #expect(model.settingsError == "Disk full")
+    #expect(model.error == nil)
+
+    await model.signOut()
+    #expect(model.auth == .signedOut)
+    #expect(model.models == nil && model.modelsError == nil && model.settingsError == nil)
+    #expect(tokens.value == nil)
+}
+
+// C7
+@MainActor
+@Test func signOutEndsTheLocalSessionBeforeTheServerAnswers() async {
+    let gate = Gate()
+    let deletes = Mutex(0)
+    let (model, tokens) = await signedIn { request in
+        guard request.method == "DELETE" else { return nil }
+        deletes.withLock { $0 += 1 }
+        await gate.wait()
+        return Reply(status: 204, body: "")
+    }
+    let signOut = Task { await model.signOut() }
+    #expect(await until { deletes.withLock { $0 } == 1 })
+    #expect(model.auth == .signedOut)
+    #expect(tokens.value == nil)
+    await gate.open()
+    await signOut.value
+    #expect(model.signInError == nil)
+}
+
+@MainActor
+@Test func signOutOnAllDevices() async {
+    let fails = Mutex(true)
+    let seen = Mutex<[String]>([])
+    let (model, tokens) = await signedIn { request in
+        seen.withLock { $0.append("\(request.authorization ?? "") \(request.method) \(request.path)") }
+        guard request.path == "/api/sessions" else { return nil }
+        return fails.withLock { $0 } ? error(500, "Internal server error") : Reply(status: 204, body: "")
+    }
+    #expect(await until { model.requests != nil })
+    await model.signOutEverywhere()
+    #expect(model.auth == .signedIn)
+    #expect(model.settingsError == "Internal server error")
+    #expect(tokens.value == "A")
+    #expect(await until { seen.withLock { $0.filter { $0.hasSuffix("/api/events") }.count } == 2 })
+
+    fails.withLock { $0 = false }
+    await model.signOutEverywhere()
+    #expect(model.auth == .signedOut)
+    #expect(model.signInError == nil)
+    #expect(tokens.value == nil)
+    #expect(seen.withLock { $0.filter { $0.hasSuffix("/api/sessions") } } == ["Bearer A DELETE /api/sessions", "Bearer A DELETE /api/sessions"])
+}
+
+// C8
+@MainActor
+@Test func lateResultsOfAnOldSessionAreDropped() async {
+    let gate = Gate()
+    let held = Mutex(0)
+    let (model, tokens) = await signedIn { request in
+        switch (request.authorization, request.method, request.path) {
+        case ("Bearer A", "PUT", "/api/settings"):
+            held.withLock { $0 += 1 }
+            await gate.wait()
+            return Reply(status: 200, body: #"{"repo":"acme/old","model":"","hasOpenRouterKey":false}"#)
+        case ("Bearer A", "GET", "/api/repos"):
+            held.withLock { $0 += 1 }
+            await gate.wait()
+            return error(401, "The session is not valid. Sign in again")
+        case ("Bearer B", "GET", "/api/settings"):
+            return Reply(status: 200, body: #"{"repo":"bob/new","model":"","hasOpenRouterKey":false}"#)
+        default: return nil
+        }
+    }
+    let select = Task { await model.selectRepo("acme/old") }
+    let repos = Task { await model.loadRepositories() }
+    #expect(await until { held.withLock { $0 } == 2 })
+
+    await model.signOut()
+    tokens.value = "B"
+    await model.start()
+    #expect(await until { model.settings?.repo == "bob/new" })
+
+    await gate.open()
+    await select.value
+    await repos.value
+    #expect(model.settings?.repo == "bob/new")
+    #expect(model.auth == .signedIn)
+    #expect(tokens.value == "B")
+    #expect(model.repositories == nil && model.repositoriesError == nil)
+    #expect(model.error == nil && model.signInError == nil)
+    await model.signOut()
+}
+
+// C9
+@MainActor
+@Test func fastFailedReviewDoesNotStayRunning() async {
+    let gate = Gate()
+    let posts = Mutex(0)
+    let (model, _) = await signedIn { request in
+        guard request.method == "POST" else { return nil }
+        posts.withLock { $0 += 1 }
+        await gate.wait()
+        return Reply(status: 202, body: taskJSON)
+    }
+    #expect(await until { model.requests != nil })
+    let start = Task { await model.startReview(repo: "acme/app", number: 1) }
+    #expect(await until { posts.withLock { $0 } == 1 })
+    #expect(model.isReviewing(repo: "acme/app", number: 1))
+
+    // The events of the start and of the failure arrive before the POST response.
+    let running = try? API.decode(API.RunningTask.self, from: Data(taskJSON.utf8))
+    model.apply(.tasks(running.map { [$0] } ?? []))
+    model.apply(.review(API.ReviewOutcome(repo: "acme/app", number: 1, review: nil, error: "GitHub: Not Found")))
+    model.apply(.tasks([]))
+    await gate.open()
+    await start.value
+    #expect(!model.isReviewing(repo: "acme/app", number: 1))
+    #expect(model.tasks.isEmpty)
+    #expect(model.reviewErrors["acme/app#1"] == "GitHub: Not Found")
+    await model.signOut()
+}
+
+// C10
+@MainActor
+@Test func doubleClickStartsOneReview() async {
+    let gate = Gate()
+    let posts = Mutex(0)
+    let (model, _) = await signedIn { request in
+        guard request.method == "POST" else { return nil }
+        guard posts.withLock({ $0 += 1; return $0 }) == 1 else { return error(409, "A review of this pull request is already running") }
+        await gate.wait()
+        return Reply(status: 202, body: taskJSON)
+    }
+    #expect(await until { model.requests != nil })
+    let first = Task { await model.startReview(repo: "acme/app", number: 1) }
+    #expect(await until { posts.withLock { $0 } == 1 })
+    await model.startReview(repo: "acme/app", number: 1)
+    await gate.open()
+    await first.value
+    #expect(posts.withLock { $0 } == 1)
+    #expect(model.reviewErrors.isEmpty)
+    // No tasks event came after the start, so the task from the response shows.
+    #expect(model.tasks.map(\.id) == ["T1"])
+    #expect(model.isReviewing(repo: "acme/app", number: 1))
+    await model.signOut()
+}
+
+// A login that is removed from the allowlist gets 403 on the stream and on every route.
+@MainActor
+@Test func notAllowedAccountEndsTheSession() async {
+    let (streamModel, streamTokens) = await signedIn { request in
+        request.path == "/api/events" ? error(403, notAllowed) : nil
+    }
+    #expect(await until { streamModel.auth == .signedOut })
+    #expect(streamModel.signInError == notAllowed)
+    #expect(streamTokens.value == nil)
+
+    let gate = Gate()
+    let (routeModel, routeTokens) = await signedIn { request in
+        switch request.path {
+        case "/api/events":
+            await gate.wait()
+            return nil
+        case "/api/repos": return error(403, notAllowed)
+        default: return nil
+        }
+    }
+    await routeModel.loadRepositories()
+    #expect(routeModel.auth == .signedOut)
+    #expect(routeModel.signInError == notAllowed)
+    #expect(routeModel.repositoriesError == nil)
+    #expect(routeTokens.value == nil)
+    await gate.open()
 }

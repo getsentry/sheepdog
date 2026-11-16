@@ -3,19 +3,22 @@ import SwiftUI
 
 struct MainView: View {
     @Environment(AppModel.self) private var model
-    @State private var selection: API.Row.ID?
 
     private var rows: [API.Row] { model.requests?.rows ?? [] }
 
     var body: some View {
+        @Bindable var model = model
         NavigationSplitView {
             Group {
                 if model.requests == nil && model.settings == nil {
                     StatusList()
                 } else if model.repo.isEmpty {
-                    placeholder("Select a repository")
+                    VStack(spacing: 0) {
+                        ErrorBanner()
+                        placeholder("Select a repository")
+                    }
                 } else {
-                    RequestList(selection: $selection)
+                    RequestList(selection: $model.selection)
                 }
             }
             .toolbar {
@@ -42,7 +45,7 @@ struct MainView: View {
             .navigationSplitViewColumnWidth(min: 360, ideal: 440)
         } detail: {
             Group {
-                if let row = rows.first(where: { $0.id == selection }) {
+                if let row = rows.first(where: { $0.id == model.selection }) {
                     PRDetailView(repo: model.repo, row: row)
                         .id(AppModel.key(repo: model.repo, number: row.number))
                 } else {
@@ -52,9 +55,9 @@ struct MainView: View {
             // AppKit starts the toolbar background of this column a few points left of the divider, over the sidebar.
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
-        .navigationTitle(rows.first { $0.id == selection }?.title ?? "")
+        .navigationTitle(rows.first { $0.id == model.selection }?.title ?? "")
         .frame(minWidth: 820, minHeight: 480)
-        .onChange(of: model.repo) { selection = nil }
+        .onChange(of: model.repo.lowercased()) { model.selection = nil }
         .task { await model.loadRepositories() }
     }
 }
@@ -105,12 +108,17 @@ private struct RepoPicker: View {
     @Environment(AppModel.self) private var model
     @State private var isOpen = false
 
+    // The server keeps the name in lower case. The repository list has the name as GitHub shows it.
+    private var name: String {
+        model.repositories?.first { $0.caseInsensitiveCompare(model.repo) == .orderedSame } ?? model.repo
+    }
+
     var body: some View {
         Button {
             isOpen.toggle()
         } label: {
             HStack {
-                Text(model.repo.isEmpty ? "Select a repository" : model.repo)
+                Text(model.repo.isEmpty ? "Select a repository" : name)
                     .font(.headline)
                 Image(systemName: "chevron.down")
                     .font(.caption)
@@ -120,6 +128,7 @@ private struct RepoPicker: View {
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
             SearchList(prompt: "Search repositories", items: model.repositories, error: model.repositoriesError) { name in
                 isOpen = false
+                guard name.caseInsensitiveCompare(model.repo) != .orderedSame else { return }
                 Task { await model.selectRepo(name) }
             }
         }
@@ -192,7 +201,7 @@ private struct ErrorBanner: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let error = model.error ?? model.requests?.error {
+        if let error = model.connectionError ?? model.error ?? model.requests?.error {
             Text(error)
                 .foregroundStyle(.white)
                 .textSelection(.enabled)
