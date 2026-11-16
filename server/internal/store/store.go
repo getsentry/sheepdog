@@ -3,11 +3,14 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"reviewqueue/internal/review"
 )
 
 var ErrNotFound = errors.New("store: not found")
@@ -202,6 +205,64 @@ func (s *Store) SessionUserID(ctx context.Context, token string) (int64, error) 
 func (s *Store) DeleteSession(ctx context.Context, token string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, hashToken(token))
 	return err
+}
+
+// Review is a finished AI review of one pull request.
+type Review struct {
+	Repo    string `json:"repo"`
+	Number  int    `json:"number"`
+	HeadSHA string `json:"headSha"`
+	Model   string `json:"model"`
+	review.Review
+	DiffTruncated bool      `json:"diffTruncated"`
+	PRUpdatedAt   time.Time `json:"prUpdatedAt"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// AddReview stores a review and sets its CreatedAt.
+func (s *Store) AddReview(ctx context.Context, userID int64, r *Review) error {
+	findings, err := json.Marshal(r.Findings)
+	if err != nil {
+		return err
+	}
+	createdAt := now()
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO reviews (user_id, repo, number, head_sha, model, risk, summary, findings_json, diff_truncated, pr_updated_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userID, r.Repo, r.Number, r.HeadSHA, r.Model, r.Risk, r.Summary, string(findings), r.DiffTruncated,
+		r.PRUpdatedAt.UTC().Format(time.RFC3339), createdAt)
+	if err != nil {
+		return err
+	}
+	r.CreatedAt = time.UnixMilli(createdAt)
+	return nil
+}
+
+func (s *Store) LatestReview(ctx context.Context, userID int64, repo string, number int) (Review, error) {
+	var (
+		r                     Review
+		findings, prUpdatedAt string
+		createdAt             int64
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT repo, number, head_sha, model, risk, summary, findings_json, diff_truncated, pr_updated_at, created_at
+		FROM reviews WHERE user_id = ? AND repo = ? AND number = ?
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, userID, repo, number,
+	).Scan(&r.Repo, &r.Number, &r.HeadSHA, &r.Model, &r.Risk, &r.Summary, &findings, &r.DiffTruncated, &prUpdatedAt, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Review{}, ErrNotFound
+	}
+	if err != nil {
+		return Review{}, err
+	}
+	if err := json.Unmarshal([]byte(findings), &r.Findings); err != nil {
+		return Review{}, err
+	}
+	if r.PRUpdatedAt, err = time.Parse(time.RFC3339, prUpdatedAt); err != nil {
+		return Review{}, err
+	}
+	r.CreatedAt = time.UnixMilli(createdAt)
+	return r, nil
 }
 
 func now() int64 {

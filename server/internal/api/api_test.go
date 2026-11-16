@@ -80,6 +80,17 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"login":%q}`, id.login)
 		return
 	}
+	if r.Method == http.MethodGet {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/contents/AGENTS.md"):
+			fmt.Fprintf(w, "agents of %s at %s", id.login, r.URL.Query().Get("ref"))
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			fmt.Fprintf(w, "diff of %s for %s", r.URL.Path, id.login)
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
 	var req struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
@@ -100,7 +111,7 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(req.Query, "repositories(first"):
 		fmt.Fprintf(w, `{"data":{"viewer":{"repositories":{"nodes":[{"nameWithOwner":"%s/one"}],"pageInfo":{"hasNextPage":false}}}}}`, id.login)
 	case strings.Contains(req.Query, "pullRequest(number"):
-		fmt.Fprintf(w, `{"data":{"repository":{"pullRequest":{"title":"%s/%s#%v","body":"","headRefName":"h","baseRefName":"main",
+		fmt.Fprintf(w, `{"data":{"repository":{"pullRequest":{"title":"%s/%s#%v","body":"","headRefName":"h","baseRefName":"main","headRefOid":"sha-1",
 			"changedFiles":1,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","reviewDecision":null,
 			"labels":{"nodes":[]},"reviewRequests":{"nodes":[]},"latestReviews":{"nodes":[]},"commits":{"nodes":[]}}}}}`,
 			id.login, req.Variables["name"], req.Variables["number"])
@@ -109,7 +120,15 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func fakeOpenRouter(w http.ResponseWriter, r *http.Request) {
+// fakeOpenRouter accepts only aliceKey. The model slow/model answers only after the request ends.
+type fakeOpenRouter struct {
+	mu        sync.Mutex
+	bodies    []string
+	started   chan struct{}
+	cancelled chan struct{}
+}
+
+func (f *fakeOpenRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer "+aliceKey {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -119,24 +138,57 @@ func fakeOpenRouter(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":{}}`)
 	case "/models/user":
 		io.WriteString(w, `{"data":[{"id":"alice/model","supported_parameters":["structured_outputs"]},{"id":"plain/model","supported_parameters":[]}]}`)
+	case "/chat/completions":
+		body, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.bodies = append(f.bodies, string(body))
+		f.mu.Unlock()
+		if bytes.Contains(body, []byte(`"model":"slow/model"`)) {
+			f.started <- struct{}{}
+			select {
+			case <-r.Context().Done():
+				f.cancelled <- struct{}{}
+			case <-time.After(10 * time.Second):
+			}
+			return
+		}
+		content, _ := json.Marshal(`{"risk":"yellow","summary":"Looks fine.","findings":[{"severity":"low","file":"a.go","title":"t","detail":"d"}]}`)
+		fmt.Fprintf(w, `{"choices":[{"message":{"content":%s}}]}`, content)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
+func (f *fakeOpenRouter) lastBody() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.bodies) == 0 {
+		return ""
+	}
+	return f.bodies[len(f.bodies)-1]
+}
+
 type harness struct {
-	t      *testing.T
-	url    string
-	dbPath string
-	github *fakeGitHub
+	t          *testing.T
+	url        string
+	dbPath     string
+	github     *fakeGitHub
+	openrouter *fakeOpenRouter
+	close      func()
 }
 
 // newHarness runs the API with fake GitHub and OpenRouter servers. seed can add rows before the pollers start.
 func newHarness(t *testing.T, seed func(*store.Store)) *harness {
+	return newHarnessAt(t, filepath.Join(t.TempDir(), "test.db"), seed)
+}
+
+// newHarnessAt runs the API on the database at dbPath. close stops it, also before the test ends.
+func newHarnessAt(t *testing.T, dbPath string, seed func(*store.Store)) *harness {
 	t.Helper()
 	gh := &fakeGitHub{polls: map[string]int{}, revoked: map[string]bool{}}
 	ghServer := httptest.NewServer(gh)
-	orServer := httptest.NewServer(http.HandlerFunc(fakeOpenRouter))
+	openRouter := &fakeOpenRouter{started: make(chan struct{}, 4), cancelled: make(chan struct{}, 4)}
+	orServer := httptest.NewServer(openRouter)
 
 	cfg, err := config.Load(func(name string) string {
 		return map[string]string{
@@ -149,7 +201,6 @@ func newHarness(t *testing.T, seed func(*store.Store)) *harness {
 	}
 	cfg.GitHubURL, cfg.OpenRouterURL = ghServer.URL, orServer.URL
 
-	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := store.Open(dbPath, cfg.SecretKey)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +220,7 @@ func newHarness(t *testing.T, seed func(*store.Store)) *harness {
 	api.Config.BaseContext = func(net.Listener) context.Context { return ctx }
 	api.Start()
 
-	t.Cleanup(func() {
+	closeOnce := sync.OnceFunc(func() {
 		cancel()
 		api.Close()
 		s.Wait()
@@ -177,7 +228,8 @@ func newHarness(t *testing.T, seed func(*store.Store)) *harness {
 		ghServer.Close()
 		orServer.Close()
 	})
-	return &harness{t: t, url: api.URL, dbPath: dbPath, github: gh}
+	t.Cleanup(closeOnce)
+	return &harness{t: t, url: api.URL, dbPath: dbPath, github: gh, openrouter: openRouter, close: closeOnce}
 }
 
 // do sends a request and fails the test when the response contains a GitHub token or an OpenRouter key.
@@ -302,12 +354,22 @@ func (s *stream) next() (name, data string) {
 	}
 }
 
-// nextRequests skips comments and returns the next requests event.
+// nextEvent skips comments and returns the next event.
+func (s *stream) nextEvent() (name, data string) {
+	s.t.Helper()
+	for {
+		if name, data = s.next(); name != "comment" {
+			return name, data
+		}
+	}
+}
+
+// nextRequests skips comments and tasks events and returns the next requests event.
 func (s *stream) nextRequests() Requests {
 	s.t.Helper()
 	for {
-		name, data := s.next()
-		if name == "comment" {
+		name, data := s.nextEvent()
+		if name == "tasks" {
 			continue
 		}
 		if name != "requests" {
@@ -402,6 +464,10 @@ func TestRoutesNeedSession(t *testing.T) {
 		{"GET", "/api/models"},
 		{"GET", "/api/review-requests"},
 		{"GET", "/api/repos/getsentry/alice-repo/pulls/1"},
+		{"GET", "/api/repos/getsentry/alice-repo/pulls/1/review"},
+		{"POST", "/api/repos/getsentry/alice-repo/pulls/1/review"},
+		{"GET", "/api/tasks"},
+		{"DELETE", "/api/tasks/x"},
 		{"GET", "/api/events"},
 	}
 	for _, route := range routes {
@@ -570,6 +636,9 @@ func TestEventsSendKeepAlive(t *testing.T) {
 	events := h.events(h.signIn(aliceToken))
 	if name, _ := events.next(); name != "requests" {
 		t.Fatalf("first event %q", name)
+	}
+	if name, data := events.next(); name != "tasks" || data != "[]" {
+		t.Fatalf("second event %q %s", name, data)
 	}
 	if name, line := events.next(); name != "comment" || line != ": keep-alive" {
 		t.Errorf("got %q %q, want a keep-alive comment", name, line)

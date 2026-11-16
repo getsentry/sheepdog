@@ -11,6 +11,7 @@ import (
 	"reviewqueue/internal/github"
 	"reviewqueue/internal/openrouter"
 	"reviewqueue/internal/store"
+	"reviewqueue/internal/tasks"
 )
 
 const repoCacheTTL = 10 * time.Minute
@@ -189,15 +190,24 @@ func (s *Server) reviewRequests(w http.ResponseWriter, _ *http.Request, user sto
 	writeJSON(w, http.StatusOK, s.requestsFor(user))
 }
 
-func (s *Server) pullRequest(w http.ResponseWriter, r *http.Request, user store.User) {
+// pullPath reads the repository and the PR number from the path, or writes a 400 error.
+func pullPath(w http.ResponseWriter, r *http.Request) (string, int, bool) {
 	repo := r.PathValue("owner") + "/" + r.PathValue("name")
 	if err := github.ValidRepo(repo); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return "", 0, false
 	}
 	number, err := strconv.Atoi(r.PathValue("number"))
 	if err != nil || number <= 0 {
 		writeError(w, http.StatusBadRequest, "The pull request number is not valid")
+		return "", 0, false
+	}
+	return repo, number, true
+}
+
+func (s *Server) pullRequest(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, number, ok := pullPath(w, r)
+	if !ok {
 		return
 	}
 	detail, err := github.New(s.cfg.GitHubURL, user.GitHubToken).PullRequest(r.Context(), repo, number)
@@ -206,4 +216,60 @@ func (s *Server) pullRequest(w http.ResponseWriter, r *http.Request, user store.
 		return
 	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) getReview(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, number, ok := pullPath(w, r)
+	if !ok {
+		return
+	}
+	review, err := s.store.LatestReview(r.Context(), user.ID, repo, number)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "This pull request has no review")
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, review)
+}
+
+func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, number, ok := pullPath(w, r)
+	if !ok {
+		return
+	}
+	if user.OpenRouterKey == "" || user.Model == "" {
+		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
+		return
+	}
+	task, err := s.tasks.Start(user.ID, tasks.ReviewWork{
+		Store:      s.store,
+		GitHub:     github.New(s.cfg.GitHubURL, user.GitHubToken),
+		OpenRouter: openrouter.New(s.cfg.OpenRouterURL, user.OpenRouterKey),
+		UserID:     user.ID,
+		Login:      user.Login,
+		Model:      user.Model,
+		Repo:       repo,
+		Number:     number,
+		Publish:    func(e tasks.ReviewEvent) { s.hub.publish(user.ID, "review", e) },
+	})
+	if errors.Is(err, tasks.ErrRunning) {
+		writeError(w, http.StatusConflict, "A review of this pull request is already running")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, task)
+}
+
+func (s *Server) listTasks(w http.ResponseWriter, _ *http.Request, user store.User) {
+	writeJSON(w, http.StatusOK, s.tasks.List(user.ID))
+}
+
+func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request, user store.User) {
+	if !s.tasks.Cancel(user.ID, r.PathValue("id")) {
+		writeError(w, http.StatusNotFound, "No running task has this ID")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

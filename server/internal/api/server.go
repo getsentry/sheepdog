@@ -14,6 +14,7 @@ import (
 	"reviewqueue/internal/config"
 	"reviewqueue/internal/github"
 	"reviewqueue/internal/store"
+	"reviewqueue/internal/tasks"
 )
 
 const maxBodyBytes = 64 << 10
@@ -23,6 +24,7 @@ type Server struct {
 	cfg   config.Config
 	store *store.Store
 	hub   *hub
+	tasks *tasks.Manager
 	wg    sync.WaitGroup
 
 	pollInterval time.Duration
@@ -40,13 +42,17 @@ type cachedRepos struct {
 	repos []string
 }
 
-// New makes a server whose pollers and event streams stop when ctx ends.
+// New makes a server whose pollers, tasks, and event streams stop when ctx ends.
 func New(ctx context.Context, cfg config.Config, db *store.Store) *Server {
+	h := newHub()
 	return &Server{
-		ctx:          ctx,
-		cfg:          cfg,
-		store:        db,
-		hub:          newHub(),
+		ctx:   ctx,
+		cfg:   cfg,
+		store: db,
+		hub:   h,
+		tasks: tasks.NewManager(ctx, func(userID int64, list []tasks.Task) {
+			h.publish(userID, "tasks", list)
+		}),
 		pollInterval: 30 * time.Second,
 		keepAlive:    25 * time.Second,
 		signIns:      newLimiter(10, time.Minute),
@@ -70,9 +76,10 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Wait blocks until all pollers stop after the context ends.
+// Wait blocks until all pollers and tasks stop after the context ends.
 func (s *Server) Wait() {
 	s.wg.Wait()
+	s.tasks.Wait()
 }
 
 func (s *Server) Handler() http.Handler {
@@ -86,6 +93,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/models", s.authed(s.models))
 	mux.HandleFunc("GET /api/review-requests", s.authed(s.reviewRequests))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}", s.authed(s.pullRequest))
+	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/review", s.authed(s.getReview))
+	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/review", s.authed(s.startReview))
+	mux.HandleFunc("GET /api/tasks", s.authed(s.listTasks))
+	mux.HandleFunc("DELETE /api/tasks/{id}", s.authed(s.cancelTask))
 	mux.HandleFunc("GET /api/events", s.authed(s.events))
 	return mux
 }

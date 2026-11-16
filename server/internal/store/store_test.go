@@ -8,6 +8,9 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"reviewqueue/internal/review"
 )
 
 const (
@@ -243,6 +246,55 @@ func TestRawRowsHoldNoPlaintext(t *testing.T) {
 		if count != 1 {
 			t.Errorf("%s has %d rows, want 1", table, count)
 		}
+	}
+}
+
+func TestReviewsByUserAndReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	key := newKey(t)
+	ctx := context.Background()
+	s, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, "bob", "ghp_b")
+	repo := "getsentry/sentry-cocoa"
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	if _, err := s.LatestReview(ctx, alice, repo, 7); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("review before add: %v", err)
+	}
+	first := Review{Repo: repo, Number: 7, HeadSHA: "old", Model: "m/one", Review: review.Review{Risk: "red", Summary: "first", Findings: []review.Finding{}}}
+	if err := s.AddReview(ctx, alice, &first); err != nil {
+		t.Fatal(err)
+	}
+	second := Review{
+		Repo: repo, Number: 7, HeadSHA: "new", Model: "m/two", DiffTruncated: true, PRUpdatedAt: updated,
+		Review: review.Review{Risk: "yellow", Summary: "second", Findings: []review.Finding{{Severity: "low", File: "a.swift", Title: "t", Detail: "d"}}},
+	}
+	if err := s.AddReview(ctx, alice, &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.CreatedAt.IsZero() {
+		t.Error("AddReview did not set CreatedAt")
+	}
+	s.Close()
+
+	s = openStore(t, path, key)
+	got, err := s.LatestReview(ctx, alice, repo, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HeadSHA != "new" || got.Model != "m/two" || got.Risk != "yellow" || got.Summary != "second" || !got.DiffTruncated ||
+		!got.PRUpdatedAt.Equal(updated) || len(got.Findings) != 1 || got.Findings[0] != second.Findings[0] || !got.CreatedAt.Equal(second.CreatedAt) {
+		t.Errorf("latest review = %+v", got)
+	}
+	if _, err := s.LatestReview(ctx, bob, repo, 7); !errors.Is(err, ErrNotFound) {
+		t.Errorf("bob sees the review of alice: %v", err)
+	}
+	if _, err := s.LatestReview(ctx, alice, repo, 8); !errors.Is(err, ErrNotFound) {
+		t.Errorf("other PR: %v", err)
 	}
 }
 

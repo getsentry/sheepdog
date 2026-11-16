@@ -74,6 +74,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, user store.User)
 
 	current, _ := json.Marshal(s.requestsFor(user))
 	writeEvent(w, event{name: "requests", data: current})
+	running, _ := json.Marshal(s.tasks.List(user.ID))
+	writeEvent(w, event{name: "tasks", data: running})
 	if stream.Flush() != nil {
 		return
 	}
