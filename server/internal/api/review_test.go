@@ -98,7 +98,7 @@ func TestReviewIsStoredAndSurvivesRestart(t *testing.T) {
 	h.wantError("GET", reviewPath, bob, nil, http.StatusNotFound, "This pull request has no review")
 
 	h.close()
-	restarted := newHarnessAt(t, h.dbPath, nil)
+	restarted := newHarnessAt(t, h.dbPath, defaultAllowed, nil)
 	var again store.Review
 	restarted.json("GET", reviewPath, alice, nil, http.StatusOK, &again)
 	if !again.CreatedAt.Equal(stored.CreatedAt) || again.HeadSHA != stored.HeadSHA || again.Model != stored.Model || !slices.Equal(again.Findings, stored.Findings) {

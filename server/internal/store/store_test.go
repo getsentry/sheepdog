@@ -187,6 +187,76 @@ func TestSessionsByHash(t *testing.T) {
 	}
 }
 
+func (s *Store) ageSession(t *testing.T, token string, idle time.Duration) {
+	t.Helper()
+	if _, err := s.db.Exec(`UPDATE sessions SET last_used_at = ? WHERE token_hash = ?`, time.Now().Add(-idle).UnixMilli(), hashToken(token)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (s *Store) sessionCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM sessions`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestSessionsExpireWhenIdle(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
+	active, _ := s.CreateSession(ctx, alice)
+	old, _ := s.CreateSession(ctx, alice)
+	expired, _ := s.CreateSession(ctx, alice)
+	s.ageSession(t, active, SessionIdleTimeout-time.Hour)
+	s.ageSession(t, old, SessionIdleTimeout+time.Hour)
+	s.ageSession(t, expired, SessionIdleTimeout+time.Hour)
+
+	if got, err := s.SessionUserID(ctx, active); err != nil || got != alice {
+		t.Errorf("session used 29 days ago = %d, %v", got, err)
+	}
+	if _, err := s.SessionUserID(ctx, expired); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expired session: %v", err)
+	}
+	if n := s.sessionCount(t); n != 2 {
+		t.Errorf("%d sessions after a request with an expired session, want 2", n)
+	}
+
+	if err := s.DeleteExpiredSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.sessionCount(t); n != 1 {
+		t.Errorf("%d sessions after cleanup, want 1", n)
+	}
+	if _, err := s.SessionUserID(ctx, active); err != nil {
+		t.Errorf("active session after cleanup: %v", err)
+	}
+}
+
+func TestDeleteUserSessions(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, "bob", "ghp_b")
+	first, _ := s.CreateSession(ctx, alice)
+	second, _ := s.CreateSession(ctx, alice)
+	bobSession, _ := s.CreateSession(ctx, bob)
+
+	if err := s.DeleteUserSessions(ctx, alice); err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{first, second} {
+		if _, err := s.SessionUserID(ctx, token); !errors.Is(err, ErrNotFound) {
+			t.Errorf("alice session after delete: %v", err)
+		}
+	}
+	if got, err := s.SessionUserID(ctx, bobSession); err != nil || got != bob {
+		t.Errorf("bob session = %d, %v", got, err)
+	}
+}
+
 func TestRawRowsHoldNoPlaintext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	s := openStore(t, path, newKey(t))

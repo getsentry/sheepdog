@@ -15,6 +15,14 @@ Each user signs in with a classic personal access token (PAT). Fine-grained toke
 
 The app sends the token to the server once. To stop the access of the server, delete the token on GitHub.
 
+## Sessions
+
+A sign-in gives the client a session token. Each device has its own session, and a new sign-in does not end the sessions on other devices. A session ends after 30 days without a request. The server deletes ended sessions at start and every hour.
+
+If you lose a device, delete the GitHub token on GitHub, sign in with a new token, and use `DELETE /api/sessions` to end the sessions on all devices.
+
+If you remove a login from `REVIEWQ_ALLOWED_LOGINS` and restart the server, the server stops polling for that user and rejects its sessions with status 403.
+
 ## Configure
 
 The server reads its configuration from environment variables.
@@ -71,16 +79,17 @@ reviewqueue.example.com {
 }
 ```
 
-The server limits sign-ins to 10 a minute for each client IP address. Behind a reverse proxy, the server sees only the address of the proxy, so all users share this limit.
+After 10 failed sign-ins in a minute from one client IP address, the server rejects sign-ins from that address with status 429 for the rest of the minute. Successful sign-ins do not count. If the connection comes from a loopback address, for example from a reverse proxy on the same computer, the server uses the last address in the `X-Forwarded-For` header as the client address. Caddy sets this header by default. The server ignores the header on other connections, for example on a Tailscale address.
 
 ## API
 
-All requests and responses use JSON. An error response has the form `{"error": "text"}`. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>`.
+All requests and responses use JSON. An error response has the form `{"error": "text"}`. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>`. A missing, unknown, or ended session gets status 401. A login that is no longer in `REVIEWQ_ALLOWED_LOGINS` gets status 403.
 
 | Route | Purpose |
 | --- | --- |
 | `POST /api/session` | Sign in with `{"githubToken"}`. Returns `{"sessionToken", "login"}`. |
-| `DELETE /api/session` | Sign out. |
+| `DELETE /api/session` | Sign out. Ends this session and closes its event streams. Returns 204. |
+| `DELETE /api/sessions` | Sign out on all devices. Ends every session of the user and closes all its event streams. Returns 204. |
 | `GET /api/me` | Returns `{"login"}`. |
 | `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, and `hasOpenRouterKey`. `PUT` also takes `openRouterKey`. An empty key deletes it. |
 | `GET /api/repos` | The repositories of the user. |
@@ -91,4 +100,4 @@ All requests and responses use JSON. An error response has the form `{"error": "
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |
 | `GET /api/tasks` | The running tasks of the user. |
 | `DELETE /api/tasks/{id}` | Stop a task. |
-| `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, and `review`. |
+| `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, and `review`. A user can open at most 8 streams at a time. One more stream gets status 429. |

@@ -27,9 +27,11 @@ type Server struct {
 	tasks *tasks.Manager
 	wg    sync.WaitGroup
 
-	pollInterval time.Duration
-	keepAlive    time.Duration
-	signIns      *limiter
+	pollInterval   time.Duration
+	keepAlive      time.Duration
+	writeTimeout   time.Duration
+	sessionCleanup time.Duration
+	signIns        *limiter
 
 	mu        sync.Mutex
 	polls     map[int64]*pollRun
@@ -53,17 +55,23 @@ func New(ctx context.Context, cfg config.Config, db *store.Store) *Server {
 		tasks: tasks.NewManager(ctx, func(userID int64, list []tasks.Task) {
 			h.publish(userID, "tasks", list)
 		}),
-		pollInterval: 30 * time.Second,
-		keepAlive:    25 * time.Second,
-		signIns:      newLimiter(10, time.Minute),
-		polls:        map[int64]*pollRun{},
-		requests:     map[int64]Requests{},
-		repoCache:    map[int64]cachedRepos{},
+		pollInterval:   30 * time.Second,
+		keepAlive:      25 * time.Second,
+		writeTimeout:   10 * time.Second,
+		sessionCleanup: time.Hour,
+		signIns:        newLimiter(10, time.Minute),
+		polls:          map[int64]*pollRun{},
+		requests:       map[int64]Requests{},
+		repoCache:      map[int64]cachedRepos{},
 	}
 }
 
-// Start begins polling for every stored user with a repository.
+// Start deletes expired sessions, and begins polling for every stored user with a repository.
 func (s *Server) Start() error {
+	if err := s.store.DeleteExpiredSessions(s.ctx); err != nil {
+		return err
+	}
+	s.wg.Go(s.cleanSessions)
 	ids, err := s.store.UserIDsWithRepo(s.ctx)
 	if err != nil {
 		return err
@@ -76,6 +84,21 @@ func (s *Server) Start() error {
 	return nil
 }
 
+func (s *Server) cleanSessions() {
+	ticker := time.NewTicker(s.sessionCleanup)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.store.DeleteExpiredSessions(s.ctx); err != nil && s.ctx.Err() == nil {
+				log.Printf("delete expired sessions: %v", err)
+			}
+		}
+	}
+}
+
 // Wait blocks until all pollers and tasks stop after the context ends.
 func (s *Server) Wait() {
 	s.wg.Wait()
@@ -86,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/session", s.signIn)
 	mux.HandleFunc("DELETE /api/session", s.authed(s.signOut))
+	mux.HandleFunc("DELETE /api/sessions", s.authed(s.signOutEverywhere))
 	mux.HandleFunc("GET /api/me", s.authed(s.me))
 	mux.HandleFunc("GET /api/settings", s.authed(s.getSettings))
 	mux.HandleFunc("PUT /api/settings", s.authed(s.putSettings))
@@ -122,6 +146,10 @@ func (s *Server) authed(handler func(http.ResponseWriter, *http.Request, store.U
 			internalError(w, err)
 			return
 		}
+		if !s.cfg.Allowed(user.Login) {
+			writeError(w, http.StatusForbidden, notAllowed)
+			return
+		}
 		handler(w, r, user)
 	}
 }
@@ -132,10 +160,19 @@ func bearerToken(r *http.Request) (string, bool) {
 	return token, ok && token != ""
 }
 
+// clientIP trusts X-Forwarded-For only from a reverse proxy on the same host. Its last entry is the address that the proxy saw.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	forwarded := r.Header.Values("X-Forwarded-For")
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() || len(forwarded) == 0 {
+		return host
+	}
+	entries := strings.Split(forwarded[len(forwarded)-1], ",")
+	if last := strings.TrimSpace(entries[len(entries)-1]); last != "" {
+		return last
 	}
 	return host
 }
@@ -164,6 +201,8 @@ func internalError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "Internal server error")
 }
 
+const notAllowed = "This GitHub account is not allowed on this server"
+
 const rejectedAgain = "GitHub rejected the token. Sign in again with a new token"
 
 // GitHub messages reach the client, so that it can show SSO links and permission errors.
@@ -178,11 +217,12 @@ func githubError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadGateway, err.Error())
 }
 
+// limiter counts failures for each key in a fixed window.
 type limiter struct {
-	mu     sync.Mutex
-	limit  int
-	window time.Duration
-	hits   map[string]*window
+	mu       sync.Mutex
+	limit    int
+	window   time.Duration
+	failures map[string]*window
 }
 
 type window struct {
@@ -191,23 +231,34 @@ type window struct {
 }
 
 func newLimiter(limit int, period time.Duration) *limiter {
-	return &limiter{limit: limit, window: period, hits: map[string]*window{}}
+	return &limiter{limit: limit, window: period, failures: map[string]*window{}}
 }
 
-func (l *limiter) allow(key string) bool {
+func (l *limiter) blocked(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := time.Now()
-	for k, w := range l.hits {
-		if now.Sub(w.start) >= l.window {
-			delete(l.hits, k)
-		}
-	}
-	w := l.hits[key]
+	w := l.current(key)
+	return w != nil && w.count >= l.limit
+}
+
+func (l *limiter) fail(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	w := l.current(key)
 	if w == nil {
-		w = &window{start: now}
-		l.hits[key] = w
+		w = &window{start: time.Now()}
+		l.failures[key] = w
 	}
 	w.count++
-	return w.count <= l.limit
+}
+
+// current deletes the windows that ended and returns the window of the key, or nil.
+func (l *limiter) current(key string) *window {
+	now := time.Now()
+	for k, w := range l.failures {
+		if now.Sub(w.start) >= l.window {
+			delete(l.failures, k)
+		}
+	}
+	return l.failures[key]
 }

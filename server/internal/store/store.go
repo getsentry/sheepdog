@@ -15,6 +15,9 @@ import (
 
 var ErrNotFound = errors.New("store: not found")
 
+// SessionIdleTimeout is how long a session stays valid without a request.
+const SessionIdleTimeout = 30 * 24 * time.Hour
+
 const schema = `
 CREATE TABLE IF NOT EXISTS users (
 	id INTEGER PRIMARY KEY,
@@ -189,17 +192,34 @@ func (s *Store) CreateSession(ctx context.Context, userID int64) (string, error)
 	return token, nil
 }
 
-// SessionUserID returns the user of a session token and marks the session as used.
+// SessionUserID returns the user of a session token and marks the session as used. It deletes an expired session.
 func (s *Store) SessionUserID(ctx context.Context, token string) (int64, error) {
 	var userID int64
 	err := s.db.QueryRowContext(ctx,
-		`UPDATE sessions SET last_used_at = ? WHERE token_hash = ? RETURNING user_id`,
-		now(), hashToken(token),
+		`UPDATE sessions SET last_used_at = ? WHERE token_hash = ? AND last_used_at > ? RETURNING user_id`,
+		now(), hashToken(token), expiredBefore(),
 	).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
+		if err := s.DeleteSession(ctx, token); err != nil {
+			return 0, err
+		}
 		return 0, ErrNotFound
 	}
 	return userID, err
+}
+
+func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE last_used_at <= ?`, expiredBefore())
+	return err
+}
+
+func (s *Store) DeleteUserSessions(ctx context.Context, userID int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+	return err
+}
+
+func expiredBefore() int64 {
+	return now() - SessionIdleTimeout.Milliseconds()
 }
 
 func (s *Store) DeleteSession(ctx context.Context, token string) error {

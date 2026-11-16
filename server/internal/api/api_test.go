@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -24,9 +25,11 @@ import (
 
 const (
 	aliceToken  = "ghp_aliceToken0000"
+	aliceToken2 = "ghp_aliceSecondToken"
 	bobToken    = "ghp_bobToken0000"
 	carolToken  = "ghp_carolNoOrgScope"
 	eveToken    = "ghp_eveNotAllowed"
+	daveToken   = "ghp_daveNotAllowedNoOrgScope"
 	aliceKey    = "sk-or-v1-aliceKey"
 	bobWrongKey = "sk-or-v1-bobWrongKey"
 	aliceRepo   = "getsentry/alice-repo"
@@ -39,17 +42,26 @@ type identity struct {
 }
 
 var identities = map[string]identity{
-	aliceToken: {"alice", "read:org, repo", 101},
-	bobToken:   {"bob", "repo, read:org", 202},
-	carolToken: {"carol", "repo", 303},
-	eveToken:   {"eve", "repo, read:org", 404},
+	aliceToken:  {"alice", "read:org, repo", 101},
+	aliceToken2: {"alice", "repo, read:org", 101},
+	bobToken:    {"bob", "repo, read:org", 202},
+	carolToken:  {"carol", "repo", 303},
+	eveToken:    {"eve", "repo, read:org", 404},
+	daveToken:   {"dave", "repo", 505},
 }
 
 // fakeGitHub answers each token with the data of its own user.
 type fakeGitHub struct {
-	mu      sync.Mutex
-	polls   map[string]int
-	revoked map[string]bool
+	mu        sync.Mutex
+	polls     map[string]int
+	repoLists map[string]int
+	revoked   map[string]bool
+}
+
+func (f *fakeGitHub) repoListCount(token string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.repoLists[token]
 }
 
 func (f *fakeGitHub) pollCount(token string) int {
@@ -109,6 +121,9 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, `{"data":{"search":{"nodes":[%s]},"repositoryOwner":{"teams":{"nodes":[]}}}}`, nodes)
 	case strings.Contains(req.Query, "repositories(first"):
+		f.mu.Lock()
+		f.repoLists[token]++
+		f.mu.Unlock()
 		fmt.Fprintf(w, `{"data":{"viewer":{"repositories":{"nodes":[{"nameWithOwner":"%s/one"}],"pageInfo":{"hasNextPage":false}}}}}`, id.login)
 	case strings.Contains(req.Query, "pullRequest(number"):
 		fmt.Fprintf(w, `{"data":{"repository":{"pullRequest":{"title":"%s/%s#%v","body":"","headRefName":"h","baseRefName":"main","headRefOid":"sha-1",
@@ -172,20 +187,23 @@ type harness struct {
 	t          *testing.T
 	url        string
 	dbPath     string
+	server     *Server
 	github     *fakeGitHub
 	openrouter *fakeOpenRouter
 	close      func()
 }
 
-// newHarness runs the API with fake GitHub and OpenRouter servers. seed can add rows before the pollers start.
-func newHarness(t *testing.T, seed func(*store.Store)) *harness {
-	return newHarnessAt(t, filepath.Join(t.TempDir(), "test.db"), seed)
+// newHarness runs the API with fake GitHub and OpenRouter servers. setup can add rows and change the server before it starts.
+func newHarness(t *testing.T, setup func(*Server)) *harness {
+	return newHarnessAt(t, filepath.Join(t.TempDir(), "test.db"), defaultAllowed, setup)
 }
 
+const defaultAllowed = "Alice, bob,carol"
+
 // newHarnessAt runs the API on the database at dbPath. close stops it, also before the test ends.
-func newHarnessAt(t *testing.T, dbPath string, seed func(*store.Store)) *harness {
+func newHarnessAt(t *testing.T, dbPath, allowed string, setup func(*Server)) *harness {
 	t.Helper()
-	gh := &fakeGitHub{polls: map[string]int{}, revoked: map[string]bool{}}
+	gh := &fakeGitHub{polls: map[string]int{}, repoLists: map[string]int{}, revoked: map[string]bool{}}
 	ghServer := httptest.NewServer(gh)
 	openRouter := &fakeOpenRouter{started: make(chan struct{}, 4), cancelled: make(chan struct{}, 4)}
 	orServer := httptest.NewServer(openRouter)
@@ -193,7 +211,7 @@ func newHarnessAt(t *testing.T, dbPath string, seed func(*store.Store)) *harness
 	cfg, err := config.Load(func(name string) string {
 		return map[string]string{
 			"REVIEWQ_SECRET_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-			"REVIEWQ_ALLOWED_LOGINS": "Alice, bob,carol",
+			"REVIEWQ_ALLOWED_LOGINS": allowed,
 		}[name]
 	})
 	if err != nil {
@@ -205,19 +223,22 @@ func newHarnessAt(t *testing.T, dbPath string, seed func(*store.Store)) *harness
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seed != nil {
-		seed(db)
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := New(ctx, cfg, db)
 	s.pollInterval = 50 * time.Millisecond
 	s.keepAlive = 100 * time.Millisecond
+	s.writeTimeout = 500 * time.Millisecond
+	if setup != nil {
+		setup(s)
+	}
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
 	api := httptest.NewUnstartedServer(s.Handler())
 	api.Config.BaseContext = func(net.Listener) context.Context { return ctx }
+	api.Config.ReadTimeout = readTimeout
+	api.Config.IdleTimeout = time.Minute
 	api.Start()
 
 	closeOnce := sync.OnceFunc(func() {
@@ -229,7 +250,7 @@ func newHarnessAt(t *testing.T, dbPath string, seed func(*store.Store)) *harness
 		orServer.Close()
 	})
 	t.Cleanup(closeOnce)
-	return &harness{t: t, url: api.URL, dbPath: dbPath, github: gh, openrouter: openRouter, close: closeOnce}
+	return &harness{t: t, url: api.URL, dbPath: dbPath, server: s, github: gh, openrouter: openRouter, close: closeOnce}
 }
 
 // do sends a request and fails the test when the response contains a GitHub token or an OpenRouter key.
@@ -250,7 +271,7 @@ func (h *harness) do(method, path, session string, body any) (int, []byte) {
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
-	for _, secret := range []string{aliceToken, bobToken, carolToken, eveToken, aliceKey, bobWrongKey} {
+	for _, secret := range []string{aliceToken, aliceToken2, bobToken, carolToken, eveToken, daveToken, aliceKey, bobWrongKey} {
 		if bytes.Contains(data, []byte(secret)) {
 			h.t.Fatalf("%s %s response contains a secret", method, path)
 		}
@@ -314,6 +335,16 @@ type stream struct {
 
 func (h *harness) events(session string) *stream {
 	h.t.Helper()
+	status, events := h.openEvents(session)
+	if status != http.StatusOK {
+		h.t.Fatalf("events: %d", status)
+	}
+	return events
+}
+
+// openEvents returns the status, and a stream for status 200.
+func (h *harness) openEvents(session string) (int, *stream) {
+	h.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	req, _ := http.NewRequestWithContext(ctx, "GET", h.url+"/api/events", nil)
 	req.Header.Set("Authorization", "Bearer "+session)
@@ -321,14 +352,30 @@ func (h *harness) events(session string) *stream {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" {
-		h.t.Fatalf("events: %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
-	}
 	h.t.Cleanup(func() {
 		cancel()
 		resp.Body.Close()
 	})
-	return &stream{t: h.t, reader: bufio.NewReader(resp.Body)}
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, nil
+	}
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		h.t.Fatalf("events content type %s", resp.Header.Get("Content-Type"))
+	}
+	return resp.StatusCode, &stream{t: h.t, reader: bufio.NewReader(resp.Body)}
+}
+
+// waitClosed reads the stream until the server ends it.
+func (s *stream) waitClosed() {
+	s.t.Helper()
+	for {
+		if _, err := s.reader.ReadString('\n'); err != nil {
+			if !errors.Is(err, io.EOF) {
+				s.t.Fatalf("stream did not end: %v", err)
+			}
+			return
+		}
+	}
 }
 
 // next returns the next event, or "comment" for a comment line.
@@ -408,6 +455,7 @@ func TestSignIn(t *testing.T) {
 	h.wantError("POST", "/api/session", "", map[string]string{"githubToken": carolToken}, http.StatusBadRequest, "The token needs the scopes repo and read:org")
 	h.wantError("POST", "/api/session", "", map[string]string{"githubToken": "ghp_unknown"}, http.StatusUnauthorized, "GitHub rejected the token")
 	h.wantError("POST", "/api/session", "", map[string]string{"githubToken": eveToken}, http.StatusForbidden, "This GitHub account is not allowed on this server")
+	h.wantError("POST", "/api/session", "", map[string]string{"githubToken": daveToken}, http.StatusForbidden, "This GitHub account is not allowed on this server")
 	h.wantError("POST", "/api/session", "", map[string]string{}, http.StatusBadRequest, "githubToken is required")
 
 	raw, err := sql.Open("sqlite", "file:"+h.dbPath)
@@ -449,7 +497,7 @@ func TestSignInIsRateLimited(t *testing.T) {
 	for range 10 {
 		h.wantError("POST", "/api/session", "", map[string]string{"githubToken": "ghp_unknown"}, http.StatusUnauthorized, "GitHub rejected the token")
 	}
-	h.wantError("POST", "/api/session", "", map[string]string{"githubToken": aliceToken}, http.StatusTooManyRequests, "Too many sign-in attempts. Try again in a minute")
+	h.wantError("POST", "/api/session", "", map[string]string{"githubToken": aliceToken}, http.StatusTooManyRequests, tooManySignIns)
 }
 
 func TestRoutesNeedSession(t *testing.T) {
@@ -457,6 +505,7 @@ func TestRoutesNeedSession(t *testing.T) {
 	session := h.signIn(aliceToken)
 	routes := [][2]string{
 		{"DELETE", "/api/session"},
+		{"DELETE", "/api/sessions"},
 		{"GET", "/api/me"},
 		{"GET", "/api/settings"},
 		{"PUT", "/api/settings"},
@@ -610,7 +659,8 @@ func TestClearingRepoStopsPoller(t *testing.T) {
 }
 
 func TestPollerStartsForStoredUsers(t *testing.T) {
-	h := newHarness(t, func(db *store.Store) {
+	h := newHarness(t, func(s *Server) {
+		db := s.store
 		id, err := db.UpsertUser(context.Background(), "alice", aliceToken)
 		if err != nil {
 			t.Fatal(err)

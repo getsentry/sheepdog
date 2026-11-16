@@ -20,6 +20,7 @@ type Requests struct {
 
 type pollRun struct {
 	cancel context.CancelFunc
+	token  string
 }
 
 func (s *Server) requestsFor(user store.User) Requests {
@@ -47,11 +48,11 @@ func (s *Server) restartPoll(userID int64) error {
 	empty := Requests{Repo: user.Repo, Rows: []github.Row{}}
 	delete(s.requests, userID)
 	s.hub.publish(userID, "requests", empty)
-	if user.Repo == "" || s.ctx.Err() != nil {
+	if user.Repo == "" || !s.cfg.Allowed(user.Login) || s.ctx.Err() != nil {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	run := &pollRun{cancel: cancel}
+	run := &pollRun{cancel: cancel, token: user.GitHubToken}
 	s.polls[userID] = run
 	s.requests[userID] = empty
 	s.wg.Go(func() { s.poll(ctx, run, user) })

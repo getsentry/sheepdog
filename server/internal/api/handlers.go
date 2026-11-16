@@ -17,56 +17,71 @@ import (
 const repoCacheTTL = 10 * time.Minute
 
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
-	if !s.signIns.allow(clientIP(r)) {
-		writeError(w, http.StatusTooManyRequests, "Too many sign-in attempts. Try again in a minute")
+	ip := clientIP(r)
+	if s.signIns.blocked(ip) {
+		writeError(w, http.StatusTooManyRequests, "Too many failed sign-in attempts. Try again in a minute")
 		return
 	}
+	if !s.createSession(w, r) {
+		s.signIns.fail(ip)
+	}
+}
+
+// createSession writes the response of a sign-in and returns true on success.
+func (s *Server) createSession(w http.ResponseWriter, r *http.Request) bool {
 	var body struct {
 		GitHubToken string `json:"githubToken"`
 	}
 	if !readJSON(w, r, &body) {
-		return
+		return false
 	}
 	token := strings.TrimSpace(body.GitHubToken)
 	if token == "" {
 		writeError(w, http.StatusBadRequest, "githubToken is required")
-		return
+		return false
 	}
 
 	viewer, err := github.New(s.cfg.GitHubURL, token).Viewer(r.Context())
 	if errors.Is(err, github.ErrUnauthorized) {
 		writeError(w, http.StatusUnauthorized, "GitHub rejected the token")
-		return
+		return false
 	}
 	if err != nil {
 		githubError(w, err)
-		return
+		return false
+	}
+	if !s.cfg.Allowed(viewer.Login) {
+		writeError(w, http.StatusForbidden, notAllowed)
+		return false
 	}
 	if !hasScopes(viewer.Scopes) {
 		writeError(w, http.StatusBadRequest, "The token needs the scopes repo and read:org")
-		return
-	}
-	if !s.cfg.Allowed(viewer.Login) {
-		writeError(w, http.StatusForbidden, "This GitHub account is not allowed on this server")
-		return
+		return false
 	}
 
 	id, err := s.store.UpsertUser(r.Context(), viewer.Login, token)
 	if err != nil {
 		internalError(w, err)
-		return
+		return false
 	}
 	session, err := s.store.CreateSession(r.Context(), id)
 	if err != nil {
 		internalError(w, err)
-		return
+		return false
 	}
-	// The poller of this user can have stopped on the old token.
-	if err := s.restartPoll(id); err != nil {
-		internalError(w, err)
-		return
+	s.mu.Lock()
+	delete(s.repoCache, id)
+	run := s.polls[id]
+	s.mu.Unlock()
+	// A restart empties the list on the other devices of the user, so it runs only for a new token or a stopped poller.
+	if run == nil || run.token != token {
+		if err := s.restartPoll(id); err != nil {
+			internalError(w, err)
+			return false
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"sessionToken": session, "login": viewer.Login})
+	return true
 }
 
 // admin:org and write:org include read:org, and GitHub lists only the granted scope.
@@ -77,12 +92,22 @@ func hasScopes(scopes []string) bool {
 	return org && slices.Contains(scopes, "repo")
 }
 
-func (s *Server) signOut(w http.ResponseWriter, r *http.Request, _ store.User) {
+func (s *Server) signOut(w http.ResponseWriter, r *http.Request, user store.User) {
 	token, _ := bearerToken(r)
 	if err := s.store.DeleteSession(r.Context(), token); err != nil {
 		internalError(w, err)
 		return
 	}
+	s.hub.close(user.ID, token)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) signOutEverywhere(w http.ResponseWriter, r *http.Request, user store.User) {
+	if err := s.store.DeleteUserSessions(r.Context(), user.ID); err != nil {
+		internalError(w, err)
+		return
+	}
+	s.hub.close(user.ID, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
