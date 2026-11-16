@@ -21,6 +21,7 @@ type Requests struct {
 type pollRun struct {
 	cancel context.CancelFunc
 	token  string
+	login  string
 }
 
 func (s *Server) requestsFor(user store.User) Requests {
@@ -59,7 +60,7 @@ func (s *Server) restartPoll(userID int64) error {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	run := &pollRun{cancel: cancel, token: user.GitHubToken}
+	run := &pollRun{cancel: cancel, token: user.GitHubToken, login: user.Login}
 	s.polls[userID] = run
 	s.requests[userID] = empty
 	s.wg.Go(func() { s.poll(ctx, run, user) })

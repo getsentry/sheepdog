@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"time"
 
@@ -86,6 +87,16 @@ func Open(path string, key []byte) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
+	}
+	// CREATE TABLE IF NOT EXISTS keeps a users table from before the github_id column, and then every sign-in fails.
+	var hasGitHubID bool
+	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info('users') WHERE name = 'github_id'`).Scan(&hasGitHubID); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if !hasGitHubID {
+		db.Close()
+		return nil, fmt.Errorf("the database %s is from an older version without users.github_id: delete it and start again", path)
 	}
 	return &Store{db: db, sealer: s}, nil
 }

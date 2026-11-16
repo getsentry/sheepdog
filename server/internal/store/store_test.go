@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,21 @@ func openStore(t *testing.T, path string, key []byte) *Store {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+func TestOpenRefusesDatabaseWithoutGitHubID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT NOT NULL UNIQUE)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if _, err := Open(path, newKey(t)); err == nil || !strings.Contains(err.Error(), "delete it") {
+		t.Fatalf("got %v, want an error that asks to delete the old database", err)
+	}
 }
 
 func TestSealerRoundTrip(t *testing.T) {

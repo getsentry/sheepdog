@@ -64,6 +64,7 @@ type fakeGitHub struct {
 	polls     map[string]int
 	repoLists map[string]int
 	revoked   map[string]bool
+	renamed   map[string]string
 }
 
 func (f *fakeGitHub) repoListCount(token string) int {
@@ -78,6 +79,13 @@ func (f *fakeGitHub) pollCount(token string) int {
 	return f.polls[token]
 }
 
+// rename gives the GitHub user of the token a new login, as a rename on GitHub does.
+func (f *fakeGitHub) rename(token, login string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renamed[token] = login
+}
+
 func (f *fakeGitHub) revoke(token string, revoked bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -89,6 +97,9 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id, known := identities[token]
 	f.mu.Lock()
 	revoked := f.revoked[token]
+	if login, ok := f.renamed[token]; ok {
+		id.login = login
+	}
 	f.mu.Unlock()
 	if !known || revoked {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -219,7 +230,7 @@ const defaultAllowed = "Alice, bob,carol"
 // newHarnessAt runs the API on the database at dbPath. close stops it, also before the test ends.
 func newHarnessAt(t *testing.T, dbPath, allowed string, setup func(*Server)) *harness {
 	t.Helper()
-	gh := &fakeGitHub{stalled: make(chan struct{}, 1), polls: map[string]int{}, repoLists: map[string]int{}, revoked: map[string]bool{}}
+	gh := &fakeGitHub{stalled: make(chan struct{}, 1), polls: map[string]int{}, repoLists: map[string]int{}, revoked: map[string]bool{}, renamed: map[string]string{}}
 	ghServer := httptest.NewServer(gh)
 	openRouter := &fakeOpenRouter{started: make(chan struct{}, 4), cancelled: make(chan struct{}, 4)}
 	orServer := httptest.NewServer(openRouter)

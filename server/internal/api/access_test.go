@@ -494,6 +494,27 @@ func TestSignInKeepsListOnOtherDevices(t *testing.T) {
 	}
 }
 
+func TestSignInAfterRenameRestartsPoller(t *testing.T) {
+	h := newHarnessAt(t, filepath.Join(t.TempDir(), "test.db"), defaultAllowed+",alice2", nil)
+	session := h.signIn(aliceToken)
+	h.settings(session, map[string]string{"repo": aliceRepo})
+	h.waitRequests(session, func(r Requests) bool { return r.FetchedAt != nil })
+
+	h.github.rename(aliceToken, "alice2")
+	h.signIn(aliceToken)
+	h.wantLogin(session, "alice2")
+	waitFor(t, "the poller uses the new login", func() bool {
+		h.server.mu.Lock()
+		defer h.server.mu.Unlock()
+		for _, run := range h.server.polls {
+			if run.login == "alice2" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 func TestReviewConflictIsPerUser(t *testing.T) {
 	h := newHarness(t, nil)
 	alice, bob := h.signIn(aliceToken), h.signIn(bobToken)

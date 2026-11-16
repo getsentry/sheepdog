@@ -73,8 +73,8 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) bool {
 	delete(s.repoCache, id)
 	run := s.polls[id]
 	s.mu.Unlock()
-	// A restart empties the list on the other devices of the user, so it runs only for a new token or a stopped poller.
-	if run == nil || run.token != token {
+	// A restart empties the list on the other devices of the user, so it runs only for a new token, a renamed login, or a stopped poller.
+	if run == nil || run.token != token || run.login != viewer.Login {
 		if err := s.restartPoll(id); err != nil {
 			internalError(w, err)
 			return false
