@@ -155,6 +155,24 @@ func (s *Store) UpdateSettings(ctx context.Context, userID int64, settings Setti
 	return tx.Commit()
 }
 
+// UserIDsWithRepo returns the users that have a repository selected.
+func (s *Store) UserIDsWithRepo(ctx context.Context) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM users WHERE repo != '' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // CreateSession returns a new session token. The database keeps only its SHA-256 hash.
 func (s *Store) CreateSession(ctx context.Context, userID int64) (string, error) {
 	token := newSessionToken()

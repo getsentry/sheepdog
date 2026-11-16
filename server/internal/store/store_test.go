@@ -122,6 +122,21 @@ func TestUserSettingsAndReopen(t *testing.T) {
 	}
 }
 
+func TestUserIDsWithRepo(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
+	s.UpsertUser(ctx, "bob", "ghp_b")
+	repo := "getsentry/sentry-cocoa"
+	if err := s.UpdateSettings(ctx, alice, Settings{Repo: &repo}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := s.UserIDsWithRepo(ctx)
+	if err != nil || len(ids) != 1 || ids[0] != alice {
+		t.Fatalf("ids = %v, %v; want [%d]", ids, err, alice)
+	}
+}
+
 func TestSessionsByHash(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	ctx := context.Background()

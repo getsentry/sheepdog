@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"reviewqueue/internal/api"
 	"reviewqueue/internal/config"
 	"reviewqueue/internal/store"
 )
@@ -38,9 +39,19 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	app := api.New(ctx, cfg, db)
+	// Pollers stop only after the context ends, so stop it before the wait, also on a listen error.
+	defer func() {
+		stop()
+		app.Wait()
+	}()
+	if err := app.Start(); err != nil {
+		return fmt.Errorf("start pollers: %w", err)
+	}
+
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           http.NewServeMux(),
+		Handler:           app.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
