@@ -4,7 +4,8 @@ import Security
 enum Keychain {
     private static let service = "com.alwx.reviewqueue"
 
-    static func read(_ account: String) -> String? {
+    // nil when the item does not exist. A denied access prompt throws, so it is not shown as a missing key.
+    static func read(_ account: String) throws -> String? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -12,7 +13,12 @@ enum Keychain {
             kSecReturnData: true,
         ]
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status != errSecItemNotFound else { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            let reason = SecCopyErrorMessageString(status, nil) as String? ?? "OSStatus \(status)"
+            throw OpenRouterError(message: "Cannot read the OpenRouter API key from the Keychain: \(reason)")
+        }
         return String(decoding: data, as: UTF8.self)
     }
 

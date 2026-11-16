@@ -22,15 +22,20 @@ struct MainView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                HStack {
-                    SettingsLink {
-                        Image(systemName: "gearshape")
+                VStack(alignment: .leading, spacing: 0) {
+                    if !model.tasks.isEmpty {
+                        TaskPanel()
                     }
-                    .buttonStyle(.borderless)
-                    .help("Settings")
-                    Spacer()
+                    HStack {
+                        SettingsLink {
+                            Image(systemName: "gearshape")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Settings")
+                        Spacer()
+                    }
+                    .padding(10)
                 }
-                .padding(10)
             }
             .navigationSplitViewColumnWidth(min: 360, ideal: 440)
         } detail: {
@@ -49,6 +54,48 @@ struct MainView: View {
         .frame(minWidth: 820, minHeight: 480)
         .onChange(of: repo) { selection = nil }
         .task { await model.loadRepositories() }
+    }
+}
+
+private struct TaskPanel: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text("Running tasks")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            ForEach(model.tasks) { task in
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(task.work.title)
+                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            Text(task.work.subtitle)
+                            Text("·")
+                            Text(task.startedAt, style: .timer)
+                                .monospacedDigit()
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    }
+                    Spacer()
+                    Button {
+                        task.cancel()
+                    } label: {
+                        Image(systemName: "stop.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Stop")
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 4)
     }
 }
 

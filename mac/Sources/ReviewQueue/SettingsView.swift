@@ -4,6 +4,7 @@ struct SettingsView: View {
     @State private var apiKey = ""
     // nil until the key is read from the Keychain.
     @State private var savedKey: String?
+    @State private var keychainError: String?
     @AppStorage("classificationModel") private var model = ""
     @State private var models: [String]?
     @State private var modelsError: String?
@@ -12,6 +13,10 @@ struct SettingsView: View {
     var body: some View {
         Form {
             SecureField("OpenRouter API key", text: $apiKey, prompt: Text("sk-or-v1-…"))
+            if let keychainError {
+                Text(keychainError)
+                    .foregroundStyle(.red)
+            }
             LabeledContent("Classification model") {
                 Button {
                     isPickerOpen.toggle()
@@ -36,9 +41,13 @@ struct SettingsView: View {
         .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
         .task {
-            let key = Keychain.read(OpenRouter.keyAccount) ?? ""
-            savedKey = key
-            apiKey = key
+            do {
+                let key = try Keychain.read(OpenRouter.keyAccount) ?? ""
+                savedKey = key
+                apiKey = key
+            } catch {
+                keychainError = error.localizedDescription
+            }
         }
         .task(id: apiKey) {
             models = nil

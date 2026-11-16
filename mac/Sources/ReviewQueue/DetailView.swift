@@ -52,7 +52,7 @@ struct PRDetailView: View {
     }
 
     private var reviewState: ReviewState? {
-        model.reviews["\(repo)#\(row.number)"]
+        model.reviews[ReviewWork.key(repo: repo, number: row.number)]
     }
 
     private var header: some View {
@@ -67,7 +67,7 @@ struct PRDetailView: View {
                 Spacer()
                 Button {
                     guard let detail else { return }
-                    Task { await model.review(repo: repo, row: row, detail: detail) }
+                    model.startReview(repo: repo, row: row, detail: detail)
                 } label: {
                     if reviewState == .running {
                         HStack(spacing: 6) {

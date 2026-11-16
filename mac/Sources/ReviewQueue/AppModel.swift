@@ -22,6 +22,7 @@ final class AppModel {
     var error: String?
     // Keyed by "owner/name#number". Reviews stay in memory only.
     var reviews: [String: ReviewState] = [:]
+    var tasks: [AppTask] = []
 
     private var loginProcess: Process?
 
@@ -86,33 +87,9 @@ final class AppModel {
         }
     }
 
-    func review(repo: String, row: PRRow, detail: PRDetail) async {
-        let key = "\(repo)#\(row.number)"
-        guard reviews[key] != .running else { return }
-        let model = UserDefaults.standard.string(forKey: "classificationModel") ?? ""
-        guard !model.isEmpty, let apiKey = Keychain.read(OpenRouter.keyAccount), !apiKey.isEmpty else {
-            reviews[key] = .failed("Set the OpenRouter API key and the classification model in Settings.")
-            return
-        }
-        reviews[key] = .running
-        log.info("review \(key, privacy: .public) with \(model, privacy: .public)")
-        do {
-            async let diff = GH.diff(repo: repo, number: row.number)
-            async let agents = GH.agentsFile(repo: repo, ref: detail.baseRefName)
-            let input = ReviewInput(
-                repo: repo, number: row.number, title: row.title,
-                baseRefName: detail.baseRefName, headRefName: detail.headRefName,
-                body: detail.body, agents: try await agents, diff: try await diff
-            )
-            let prompt = ReviewPrompt.user(input)
-            let body = try ReviewPrompt.requestBody(model: model, user: prompt.text)
-            let review = try await OpenRouter.review(body, apiKey: apiKey)
-            reviews[key] = .done(ReviewResult(review: review, model: model, date: .now, prUpdatedAt: row.updatedAt, diffTruncated: prompt.truncated))
-            log.info("review \(key, privacy: .public) done: \(review.risk.rawValue, privacy: .public), \(review.findings.count) findings")
-        } catch {
-            log.error("review \(key, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-            reviews[key] = .failed(error.localizedDescription)
-        }
+    func startReview(repo: String, row: PRRow, detail: PRDetail) {
+        guard reviews[ReviewWork.key(repo: repo, number: row.number)] != .running else { return }
+        start(ReviewWork(repo: repo, row: row, detail: detail))
     }
 
     func loadRepositories() async {
