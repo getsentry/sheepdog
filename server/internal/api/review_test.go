@@ -245,6 +245,14 @@ func TestClassificationIsStoredAndSeparateFromReview(t *testing.T) {
 		t.Errorf("stored classification %+v", stored)
 	}
 	h.wantError("GET", classificationPath, bob, nil, http.StatusNotFound, "This pull request has no classification")
+	var all []store.Classification
+	h.json("GET", "/api/repos/GetSentry/Sentry-Cocoa/classifications", alice, nil, http.StatusOK, &all)
+	if len(all) != 1 || all[0].Number != 7 || all[0].Score != 4 {
+		t.Errorf("classifications of alice %+v", all)
+	}
+	if status, body := h.do("GET", "/api/repos/getsentry/sentry-cocoa/classifications", bob, nil); status != http.StatusOK || strings.TrimSpace(string(body)) != "[]" {
+		t.Errorf("classifications of bob = %d %s", status, body)
+	}
 	h.wantError("GET", reviewPath, alice, nil, http.StatusNotFound, "This pull request has no review")
 }
 

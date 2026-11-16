@@ -356,17 +356,15 @@ func (s *Store) AddClassification(ctx context.Context, userID int64, c *Classifi
 	return nil
 }
 
-func (s *Store) LatestClassification(ctx context.Context, userID int64, repo string, number int) (Classification, error) {
+const classificationColumns = `repo, number, head_sha, model, score, reason, diff_truncated, pr_updated_at, created_at`
+
+func scanClassification(row interface{ Scan(...any) error }) (Classification, error) {
 	var (
 		c           Classification
 		prUpdatedAt string
 		createdAt   int64
 	)
-	err := s.db.QueryRowContext(ctx, `
-		SELECT repo, number, head_sha, model, score, reason, diff_truncated, pr_updated_at, created_at
-		FROM classifications WHERE user_id = ? AND repo = ? AND number = ?
-		ORDER BY created_at DESC, rowid DESC LIMIT 1`, userID, repo, number,
-	).Scan(&c.Repo, &c.Number, &c.HeadSHA, &c.Model, &c.Score, &c.Reason, &c.DiffTruncated, &prUpdatedAt, &createdAt)
+	err := row.Scan(&c.Repo, &c.Number, &c.HeadSHA, &c.Model, &c.Score, &c.Reason, &c.DiffTruncated, &prUpdatedAt, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Classification{}, ErrNotFound
 	}
@@ -378,6 +376,35 @@ func (s *Store) LatestClassification(ctx context.Context, userID int64, repo str
 	}
 	c.CreatedAt = time.UnixMilli(createdAt)
 	return c, nil
+}
+
+func (s *Store) LatestClassification(ctx context.Context, userID int64, repo string, number int) (Classification, error) {
+	return scanClassification(s.db.QueryRowContext(ctx, `
+		SELECT `+classificationColumns+`
+		FROM classifications WHERE user_id = ? AND repo = ? AND number = ?
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, userID, repo, number))
+}
+
+// LatestClassifications returns the latest classification of each PR of the repository, ordered by PR number.
+func (s *Store) LatestClassifications(ctx context.Context, userID int64, repo string) ([]Classification, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+classificationColumns+` FROM (
+			SELECT *, ROW_NUMBER() OVER (PARTITION BY number ORDER BY created_at DESC, rowid DESC) AS position
+			FROM classifications WHERE user_id = ? AND repo = ?
+		) WHERE position = 1 ORDER BY number`, userID, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []Classification{}
+	for rows.Next() {
+		c, err := scanClassification(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, c)
+	}
+	return list, rows.Err()
 }
 
 func now() int64 {

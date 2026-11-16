@@ -490,6 +490,36 @@ func TestClassificationsByUserAndReopen(t *testing.T) {
 	}
 }
 
+func TestLatestClassificationsOfRepository(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
+	add := func(user int64, repo string, number, score int) {
+		t.Helper()
+		c := Classification{Repo: repo, Number: number, Classification: review.Classification{Score: score, Reason: "r"}}
+		if err := s.AddClassification(ctx, user, &c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(alice, "acme/app", 9, 2)
+	add(alice, "acme/app", 3, 8)
+	add(alice, "acme/app", 9, 5)
+	add(alice, "acme/other", 3, 1)
+	add(bob, "acme/app", 4, 7)
+
+	list, err := s.LatestClassifications(ctx, alice, "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Number != 3 || list[0].Score != 8 || list[1].Number != 9 || list[1].Score != 5 {
+		t.Errorf("classifications %+v", list)
+	}
+	if list, _ := s.LatestClassifications(ctx, bob, "acme/other"); list == nil || len(list) != 0 {
+		t.Errorf("bob sees %+v, want an empty list", list)
+	}
+}
+
 func TestPragmas(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	var mode string

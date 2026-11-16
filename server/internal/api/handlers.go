@@ -294,6 +294,20 @@ func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.
 	writeJSON(w, http.StatusAccepted, task)
 }
 
+func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo := strings.ToLower(r.PathValue("owner") + "/" + r.PathValue("name"))
+	if err := github.ValidRepo(repo); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	list, err := s.store.LatestClassifications(r.Context(), user.ID, repo)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
 func (s *Server) getClassification(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
 	if !ok {
