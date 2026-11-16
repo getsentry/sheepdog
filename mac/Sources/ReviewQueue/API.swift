@@ -288,6 +288,11 @@ struct APIClient: Sendable {
         try API.decode(API.RunningTask.self, from: try await send("POST", "api/repos/\(repo)/pulls/\(number)/review"))
     }
 
+    // The latest stored classification of each PR of the repository.
+    func classifications(repo: String) async throws -> [API.Classification] {
+        try API.decode([API.Classification].self, from: try await send("GET", "api/repos/\(repo)/classifications"))
+    }
+
     // nil when the PR has no stored classification.
     func classification(repo: String, number: Int) async throws -> API.Classification? {
         do {

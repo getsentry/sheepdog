@@ -236,7 +236,7 @@ private struct RequestList: View {
                 placeholder("No review requests")
             } else {
                 List(rows, selection: $selection) { row in
-                    RowView(row: row)
+                    RowView(row: row, classification: model.classifications[AppModel.key(repo: model.repo, number: row.number)])
                 }
                 .contextMenu(forSelectionType: API.Row.ID.self) { ids in
                     Button("Open on GitHub") { open(ids) }
@@ -256,6 +256,7 @@ private struct RequestList: View {
 
 private struct RowView: View {
     let row: API.Row
+    let classification: API.Classification?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -263,8 +264,13 @@ private struct RowView: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
-                Text(row.title)
-                    .lineLimit(2)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if let classification {
+                        score(classification)
+                    }
+                    Text(row.title)
+                        .lineLimit(2)
+                }
                 HStack(spacing: 6) {
                     Text(row.author)
                         .foregroundStyle(.secondary)
@@ -295,6 +301,18 @@ private struct RowView: View {
         .contentShape(Rectangle())
     }
 
+    // A classification from before the last change of the PR is dimmed.
+    private func score(_ classification: API.Classification) -> some View {
+        let outdated = row.updatedAt > classification.prUpdatedAt
+        return Text(verbatim: "\(classification.score)")
+            .font(.callout.bold().monospacedDigit())
+            .foregroundStyle(.white)
+            .frame(minWidth: 18)
+            .padding(.horizontal, 4)
+            .background(dangerColor(classification.score), in: RoundedRectangle(cornerRadius: 4))
+            .opacity(outdated ? 0.45 : 1)
+            .help(outdated ? "Danger \(classification.score)/10. The PR changed after this classification." : "Danger \(classification.score)/10")
+    }
 }
 
 func capsule(_ text: String, color: Color) -> some View {

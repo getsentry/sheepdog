@@ -67,6 +67,8 @@ final class AppModel {
     // Changes with each session, so that late results of an old session are dropped.
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var tasksVersion = 0
+    // The repository whose stored classifications were loaded for the list. nil after a reconnect, so the next requests event loads them again.
+    @ObservationIgnored private var classificationsRepo: String?
 
     init(
         session: URLSession = .shared,
@@ -250,6 +252,21 @@ final class AppModel {
         }
     }
 
+    func loadClassifications(repo: String) async {
+        do {
+            for classification in try await checked({ try await $0.classifications(repo: repo) }) {
+                let key = Self.key(repo: classification.repo, number: classification.number)
+                if classification.createdAt >= classifications[key]?.createdAt ?? .distantPast {
+                    classifications[key] = classification
+                }
+            }
+        } catch is CancellationError {
+        } catch {
+            classificationsRepo = nil
+            self.error = error.localizedDescription
+        }
+    }
+
     func isClassifying(repo: String, number: Int) -> Bool {
         let key = Self.key(repo: repo, number: number)
         return startingClassifications.contains(key) || tasks.contains { $0.kind == "classify" && $0.key.lowercased() == key }
@@ -289,6 +306,11 @@ final class AppModel {
         switch event {
         case .requests(let value):
             requests = value
+            if !value.repo.isEmpty, value.repo.lowercased() != classificationsRepo {
+                classificationsRepo = value.repo.lowercased()
+                let repo = value.repo
+                Task { await loadClassifications(repo: repo) }
+            }
         case .tasks(let value):
             tasksVersion += 1
             tasks = value
@@ -315,6 +337,7 @@ final class AppModel {
         switch update {
         case .connected:
             connectionError = nil
+            classificationsRepo = nil
             if repositoriesError != nil {
                 Task { await loadRepositories() }
             }
@@ -381,6 +404,7 @@ final class AppModel {
         classifications = [:]
         classificationErrors = [:]
         startingClassifications = []
+        classificationsRepo = nil
         signInError = message
         auth = .signedOut
     }

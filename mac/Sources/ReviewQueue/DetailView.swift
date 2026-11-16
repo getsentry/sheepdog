@@ -198,7 +198,7 @@ private struct ClassificationSection: View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(verbatim: "\(classification.score)/10")
                 .font(.title2.bold().monospacedDigit())
-                .foregroundStyle(color)
+                .foregroundStyle(dangerColor(classification.score))
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(label)
@@ -223,15 +223,7 @@ private struct ClassificationSection: View {
         }
         .textSelection(.enabled)
         .padding(12)
-        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var color: Color {
-        switch classification.score {
-        case ...3: .green
-        case 4...6: .orange
-        default: .red
-        }
+        .background(dangerColor(classification.score).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var label: String {
@@ -242,6 +234,14 @@ private struct ClassificationSection: View {
         case 7...9: "High danger"
         default: "Extreme danger"
         }
+    }
+}
+
+func dangerColor(_ score: Int) -> Color {
+    switch score {
+    case ...3: .green
+    case 4...6: .orange
+    default: .red
     }
 }
 

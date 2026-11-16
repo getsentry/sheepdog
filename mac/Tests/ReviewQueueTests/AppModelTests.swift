@@ -111,6 +111,7 @@ private func signedIn(
         switch (request.method, request.path) {
         case ("GET", "/api/events"): return Reply(status: 200, body: streamBody)
         case (_, "/api/settings"): return Reply(status: 200, body: settingsJSON)
+        case ("GET", "/api/repos/acme/app/classifications"): return Reply(status: 200, body: "[]")
         case ("DELETE", _): return Reply(status: 204, body: "")
         default: return error(404, "Not found")
         }
@@ -446,6 +447,31 @@ private func signedIn(
     #expect(model.classificationErrors.isEmpty)
     #expect(model.reviews.isEmpty)
     #expect(!model.isClassifying(repo: repo, number: 6773))
+}
+
+private func classificationJSON(number: Int, score: Int, createdAt: String) -> String {
+    #"{"repo":"acme/app","number":\#(number),"headSha":"abc","model":"m","score":\#(score),"reason":"r","diffTruncated":false,"prUpdatedAt":"2026-11-16T10:00:00Z","createdAt":"\#(createdAt)"}"#
+}
+
+@MainActor
+@Test func listClassificationsLoadForTheRepositoryAndAfterReconnect() async {
+    let reconnect = Gate()
+    let loads = Mutex(0)
+    let (model, _) = await signedIn(sleep: reconnectOnce(after: reconnect)) { request in
+        guard request.path == "/api/repos/acme/app/classifications" else { return nil }
+        let score = loads.withLock { $0 += 1; return $0 } == 1 ? 2 : 9
+        return Reply(status: 200, body: "[\(classificationJSON(number: 1, score: score, createdAt: score == 2 ? "2026-11-16T10:00:00Z" : "2026-11-16T11:00:00Z")),\(classificationJSON(number: 4, score: 6, createdAt: "2026-11-16T10:00:00Z"))]")
+    }
+    #expect(await until { model.classifications["acme/app#4"]?.score == 6 })
+    #expect(model.classifications["acme/app#1"]?.score == 2)
+    #expect(loads.withLock { $0 } == 1)
+
+    await reconnect.open()
+    #expect(await until { model.classifications["acme/app#1"]?.score == 9 })
+    #expect(loads.withLock { $0 } == 2)
+    #expect(model.error == nil)
+    await model.signOut()
+    #expect(model.classifications.isEmpty)
 }
 
 @MainActor
