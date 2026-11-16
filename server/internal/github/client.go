@@ -144,6 +144,7 @@ func (c *Client) graphql(ctx context.Context, query string, variables map[string
 }
 
 type Viewer struct {
+	ID     int64
 	Login  string
 	Scopes []string
 }
@@ -154,10 +155,14 @@ func (c *Client) Viewer(ctx context.Context) (Viewer, error) {
 		return Viewer{}, err
 	}
 	var user struct {
+		ID    int64  `json:"id"`
 		Login string `json:"login"`
 	}
 	if err := json.Unmarshal(body, &user); err != nil {
 		return Viewer{}, err
+	}
+	if user.ID == 0 {
+		return Viewer{}, errors.New("The GitHub user has no ID")
 	}
 	var scopes []string
 	for scope := range strings.SplitSeq(resp.Header.Get("X-OAuth-Scopes"), ",") {
@@ -165,7 +170,7 @@ func (c *Client) Viewer(ctx context.Context) (Viewer, error) {
 			scopes = append(scopes, scope)
 		}
 	}
-	return Viewer{Login: user.Login, Scopes: scopes}, nil
+	return Viewer{ID: user.ID, Login: user.Login, Scopes: scopes}, nil
 }
 
 const repositoriesQuery = `

@@ -95,10 +95,11 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 }
 
 // record stores and publishes a poll result. It returns false when a newer poller replaced this one.
+// It publishes under the server lock, so that a restart cannot publish its empty list before this result.
 func (s *Server) record(userID int64, run *pollRun, rows []github.Row, err error) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.polls[userID] != run {
-		s.mu.Unlock()
 		return false
 	}
 	result := s.requests[userID]
@@ -115,7 +116,6 @@ func (s *Server) record(userID int64, run *pollRun, rows []github.Row, err error
 		result.Error = ""
 	}
 	s.requests[userID] = result
-	s.mu.Unlock()
 	s.hub.publish(userID, "requests", result)
 	return true
 }

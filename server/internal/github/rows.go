@@ -3,6 +3,7 @@ package github
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -67,7 +68,7 @@ func ToRows(data []byte, login string) ([]Row, error) {
 			reviewer := request.RequestedReviewer
 			switch {
 			case reviewer == nil:
-			case reviewer.Login != "" && reviewer.Login == login:
+			case reviewer.Login != "" && strings.EqualFold(reviewer.Login, login):
 				reasons = append(reasons, "you")
 			case reviewer.CombinedSlug != "" && myTeams[reviewer.CombinedSlug] && reviewer.Name != "":
 				reasons = append(reasons, reviewer.Name)

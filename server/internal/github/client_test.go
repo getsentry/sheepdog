@@ -48,16 +48,26 @@ func TestViewerReturnsLoginAndScopes(t *testing.T) {
 			t.Errorf("path %q", r.URL.Path)
 		}
 		w.Header().Set("X-OAuth-Scopes", "read:org, repo")
-		io.WriteString(w, `{"login":"me"}`)
+		io.WriteString(w, `{"login":"me","id":12345678901}`)
 	})
 	viewer, err := client.Viewer(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if viewer.Login != "me" {
-		t.Fatalf("login %q", viewer.Login)
+	if viewer.Login != "me" || viewer.ID != 12345678901 {
+		t.Fatalf("viewer %+v", viewer)
 	}
 	equal(t, viewer.Scopes, []string{"read:org", "repo"})
+}
+
+func TestViewerWithoutIDIsAnError(t *testing.T) {
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-OAuth-Scopes", "read:org, repo")
+		io.WriteString(w, `{"login":"me"}`)
+	})
+	if _, err := client.Viewer(context.Background()); err == nil || err.Error() != "The GitHub user has no ID" {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestRejectedTokenIsUnauthorized(t *testing.T) {

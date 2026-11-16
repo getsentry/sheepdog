@@ -17,7 +17,7 @@ import (
 const repoCacheTTL = 10 * time.Minute
 
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := signInKey(clientIP(r))
 	if s.signIns.blocked(ip) {
 		writeError(w, http.StatusTooManyRequests, "Too many failed sign-in attempts. Try again in a minute")
 		return
@@ -59,7 +59,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
-	id, err := s.store.UpsertUser(r.Context(), viewer.Login, token)
+	id, err := s.store.UpsertUser(r.Context(), viewer.ID, viewer.Login, token)
 	if err != nil {
 		internalError(w, err)
 		return false

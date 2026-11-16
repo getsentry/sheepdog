@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -133,8 +134,8 @@ func TestExpiredSessionsAreDeleted(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	h := newHarnessAt(t, dbPath, defaultAllowed, func(s *Server) {
 		ctx := context.Background()
-		alice, _ := s.store.UpsertUser(ctx, "alice", aliceToken)
-		bob, _ := s.store.UpsertUser(ctx, "bob", bobToken)
+		alice, _ := s.store.UpsertUser(ctx, 1, "alice", aliceToken)
+		bob, _ := s.store.UpsertUser(ctx, 2, "bob", bobToken)
 		s.store.CreateSession(ctx, alice)
 		s.store.CreateSession(ctx, bob)
 		ageSessions(t, dbPath, "alice")
@@ -271,18 +272,186 @@ func TestEventsEndForReaderThatStops(t *testing.T) {
 
 func TestEventStreamLimit(t *testing.T) {
 	h := newHarness(t, nil)
-	alice, bob := h.signIn(aliceToken), h.signIn(bobToken)
+	bob := h.signIn(bobToken)
+	var sessions []string
 	for range maxStreams {
-		h.events(alice)
+		session := h.signIn(aliceToken)
+		h.events(session)
+		sessions = append(sessions, session)
 	}
-	if status, _ := h.openEvents(alice); status != http.StatusTooManyRequests {
+	ninth := h.signIn(aliceToken)
+	if status, _ := h.openEvents(ninth); status != http.StatusTooManyRequests {
 		t.Fatalf("stream %d = %d, want 429", maxStreams+1, status)
 	}
-	h.wantError("GET", "/api/events", alice, nil, http.StatusTooManyRequests, tooManyStreams)
+	h.wantError("GET", "/api/events", ninth, nil, http.StatusTooManyRequests, tooManyStreams)
+	h.events(sessions[0])
 	h.events(bob)
 
-	h.json("DELETE", "/api/sessions", alice, nil, http.StatusNoContent, nil)
+	h.json("DELETE", "/api/sessions", ninth, nil, http.StatusNoContent, nil)
 	h.events(h.signIn(aliceToken))
+}
+
+func TestNewStreamEndsOlderStreamsOfSession(t *testing.T) {
+	h := newHarness(t, nil)
+	phone, laptop := h.signIn(aliceToken), h.signIn(aliceToken)
+	old, other := h.events(phone), h.events(laptop)
+	current := h.events(phone)
+	old.waitClosed()
+	other.waitKeepAlive()
+	current.waitKeepAlive()
+	if n := h.server.hub.count(h.userID("alice")); n != 2 {
+		t.Errorf("%d open streams, want 2", n)
+	}
+}
+
+// The handler runs as if authed accepted the session just before a sign-out, so the sign-out found no stream to end.
+func TestEventsRejectSessionEndedBeforeSubscribe(t *testing.T) {
+	h := newHarness(t, nil)
+	alice := h.signIn(aliceToken)
+	user, err := h.server.store.User(context.Background(), h.userID("alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.json("DELETE", "/api/session", alice, nil, http.StatusNoContent, nil)
+
+	req := httptest.NewRequest("GET", "/api/events", nil)
+	req.Header.Set("Authorization", "Bearer "+alice)
+	rec := httptest.NewRecorder()
+	h.server.events(rec, req, user)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), invalidSession) {
+		t.Errorf("events after sign-out = %d %s, want 401", rec.Code, rec.Body)
+	}
+	if n := h.server.hub.count(user.ID); n != 0 {
+		t.Errorf("%d streams left open", n)
+	}
+}
+
+func TestReusedLoginGetsNewUser(t *testing.T) {
+	h := newHarness(t, nil)
+	first := h.signIn(aliceToken)
+	h.settings(first, map[string]string{"repo": aliceRepo, "model": "alice/model", "openRouterKey": aliceKey})
+	h.json("POST", reviewPath, first, nil, http.StatusAccepted, nil)
+	waitFor(t, "the review is stored", func() bool {
+		status, _ := h.do("GET", reviewPath, first, nil)
+		return status == http.StatusOK
+	})
+
+	second := h.signIn(newAliceToken)
+	h.wantLogin(second, "alice")
+	var settings settingsResponse
+	h.json("GET", "/api/settings", second, nil, http.StatusOK, &settings)
+	if settings != (settingsResponse{}) {
+		t.Errorf("settings of the new user %+v, want none", settings)
+	}
+	h.wantError("GET", "/api/models", second, nil, http.StatusBadRequest, "Set an OpenRouter API key first")
+	h.wantError("GET", reviewPath, second, nil, http.StatusNotFound, "This pull request has no review")
+	var requests Requests
+	h.json("GET", "/api/review-requests", second, nil, http.StatusOK, &requests)
+	if requests.Repo != "" || len(requests.Rows) != 0 {
+		t.Errorf("requests of the new user %+v", requests)
+	}
+
+	h.json("DELETE", "/api/sessions", second, nil, http.StatusNoContent, nil)
+	h.wantLogin(first, "alice")
+	h.json("GET", "/api/settings", first, nil, http.StatusOK, &settings)
+	if settings != (settingsResponse{Repo: aliceRepo, Model: "alice/model", HasOpenRouterKey: true}) {
+		t.Errorf("settings of the first user %+v", settings)
+	}
+	h.json("GET", reviewPath, first, nil, http.StatusOK, nil)
+	polled := h.github.pollCount(aliceToken)
+	waitFor(t, "the first user is polled with its own token", func() bool { return h.github.pollCount(aliceToken) > polled })
+	if n := h.github.pollCount(newAliceToken); n != 0 {
+		t.Errorf("the token of the new user was used for %d polls", n)
+	}
+
+	var users int
+	if err := rawDB(t, h.dbPath).QueryRow(`SELECT count(*) FROM users WHERE login = 'alice'`).Scan(&users); err != nil || users != 2 {
+		t.Errorf("%d user rows with the login alice, %v; want 2", users, err)
+	}
+}
+
+func TestSignInKey(t *testing.T) {
+	for ip, want := range map[string]string{
+		"198.51.100.1":         "198.51.100.1",
+		"::ffff:198.51.100.1":  "198.51.100.1",
+		"2001:db8:1:2:3:4:5:6": "2001:db8:1:2::/64",
+		"2001:db8:1:2::9":      "2001:db8:1:2::/64",
+		"fe80::1%eth0":         "fe80::/64",
+		"not an address":       "not an address",
+	} {
+		if got := signInKey(ip); got != want {
+			t.Errorf("signInKey(%q) = %q, want %q", ip, got, want)
+		}
+	}
+}
+
+func TestSignInLimitCoversIPv6Prefix(t *testing.T) {
+	h := newHarness(t, nil)
+	for range 10 {
+		h.signInFrom("2001:db8:1:2::1", "ghp_unknown")
+	}
+	if status := h.signInFrom("2001:db8:1:2:ffff::7", aliceToken); status != http.StatusTooManyRequests {
+		t.Errorf("sign-in from the same /64 = %d, want 429", status)
+	}
+	if status := h.signInFrom("2001:db8:1:3::1", aliceToken); status != http.StatusOK {
+		t.Errorf("sign-in from another /64 = %d, want 200", status)
+	}
+}
+
+func TestLimiterDeletesEndedWindowsOncePerPeriod(t *testing.T) {
+	l := newLimiter(1, time.Minute)
+	ended := time.Now().Add(-2 * time.Minute)
+	l.swept = time.Now()
+	l.failures["ended"] = &window{start: ended, count: 5}
+	if l.blocked("other") {
+		t.Fatal("a key without failures is blocked")
+	}
+	if _, ok := l.failures["ended"]; !ok {
+		t.Fatal("the limiter deleted windows again within one period")
+	}
+	if l.blocked("ended") {
+		t.Error("an ended window still blocks")
+	}
+
+	l.failures["ended"] = &window{start: ended, count: 5}
+	l.swept = ended
+	l.blocked("other")
+	if len(l.failures) != 0 {
+		t.Errorf("%d windows left after the periodic delete", len(l.failures))
+	}
+}
+
+// record must publish under the server lock, so that a restart cannot publish between its store and its event.
+func TestRecordPublishesUnderServerLock(t *testing.T) {
+	h := newHarness(t, nil)
+	alice := h.signIn(aliceToken)
+	h.settings(alice, map[string]string{"repo": aliceRepo})
+	id := h.userID("alice")
+	h.server.mu.Lock()
+	run := h.server.polls[id]
+	h.server.mu.Unlock()
+
+	serverLocked := func() bool {
+		if h.server.mu.TryLock() {
+			h.server.mu.Unlock()
+			return false
+		}
+		return true
+	}
+	h.server.hub.mu.Lock()
+	recorded := make(chan bool)
+	go func() { recorded <- h.server.record(id, run, nil, nil) }()
+	held := false
+	for deadline := time.Now().Add(time.Second); !held && time.Now().Before(deadline); {
+		held = serverLocked()
+	}
+	time.Sleep(20 * time.Millisecond)
+	held = held && serverLocked()
+	h.server.hub.mu.Unlock()
+	<-recorded
+	if !held {
+		t.Error("record released the server lock before it published")
+	}
 }
 
 func TestSignInClearsRepoCache(t *testing.T) {

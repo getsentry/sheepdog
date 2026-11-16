@@ -119,6 +119,20 @@ func TestDirectRequestIsLabeledYou(t *testing.T) {
 	equal(t, fixtureRow(t, 1).Reasons, []string{"you"})
 }
 
+func TestLoginIgnoresCase(t *testing.T) {
+	rows, err := ToRows([]byte(rowsFixture), "ME")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Number == 1 {
+			equal(t, row.Reasons, []string{"you"})
+			return
+		}
+	}
+	t.Fatal("no row 1")
+}
+
 func TestRequestToMyTeamIsLabeledWithTeamName(t *testing.T) {
 	equal(t, fixtureRow(t, 2).Reasons, []string{"Mobile"})
 }

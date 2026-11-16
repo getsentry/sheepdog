@@ -17,6 +17,8 @@ The app sends the token to the server once. To stop the access of the server, de
 
 ## Sessions
 
+The server knows a user by the numeric GitHub user ID, not by the login. If a user changes the login, the data stays with the user at the next sign-in. If another person later takes the old login, that person gets a new, empty user.
+
 A sign-in gives the client a session token. Each device has its own session, and a new sign-in does not end the sessions on other devices. A session ends after 30 days without a request. The server deletes ended sessions at start and every hour.
 
 If you lose a device, delete the GitHub token on GitHub, sign in with a new token, and use `DELETE /api/sessions` to end the sessions on all devices.
@@ -46,7 +48,7 @@ If a required variable is missing or wrong, the server stops at once with a mess
 
 ## Build and run
 
-You need Go 1.27 or later. Run all commands in this directory.
+You need Go 1.27.1 or later. Run all commands in this directory.
 
 ```sh
 go vet ./... && go test ./...
@@ -107,6 +109,6 @@ An AI review sends at most 200,000 characters of the diff. The server counts Uni
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |
 | `GET /api/tasks` | The running tasks of the user. |
 | `DELETE /api/tasks/{id}` | Stop a task. |
-| `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, and `review`. A user can open at most 8 streams at a time. One more stream gets status 429. |
+| `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, and `review`. A new stream of a session ends the older streams of that session. A user can open at most 8 streams at a time. One more stream gets status 429. |
 
 A `requests` or `tasks` event has the full current state. A `review` event is sent once when a review is stored or fails, also when the task was stopped after the review was stored. The server never skips a `review` event. If a client reads its stream too slowly, the server ends that stream instead, and the client must connect again. A new stream starts with the current `requests` and `tasks` events, and the client must load the stored reviews again with `GET .../review`.

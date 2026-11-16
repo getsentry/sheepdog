@@ -66,15 +66,15 @@ func TestSecretCopiedToAnotherRowDoesNotDecrypt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	s := openStore(t, path, newKey(t))
 	ctx := context.Background()
-	alice, err := s.UpsertUser(ctx, "alice", githubToken)
+	alice, err := s.UpsertUser(ctx, 1, "alice", githubToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := s.UpsertUser(ctx, "bob", "ghp_bobToken")
+	bob, err := s.UpsertUser(ctx, 2, "bob", "ghp_bobToken")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again, err := s.UpsertUser(ctx, "Alice", githubToken+"2"); err != nil || again != alice {
+	if again, err := s.UpsertUser(ctx, 1, "alice", githubToken+"2"); err != nil || again != alice {
 		t.Fatalf("second sign-in of alice = %d, %v", again, err)
 	}
 	if u, err := s.User(ctx, alice); err != nil || u.GitHubToken != githubToken+"2" || u.Login != "alice" {
@@ -108,7 +108,7 @@ func TestWrongKeyCannotDecrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := s.UpsertUser(ctx, "alwx", githubToken)
+	id, err := s.UpsertUser(ctx, 3, "alwx", githubToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +129,11 @@ func TestUserSettingsAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := s.UpsertUser(ctx, "alwx", "ghp_old")
+	id, err := s.UpsertUser(ctx, 3, "alwx", "ghp_old")
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := s.UpsertUser(ctx, "ALWX", githubToken)
+	again, err := s.UpsertUser(ctx, 3, "alwx", githubToken)
 	if err != nil || again != id {
 		t.Fatalf("second upsert = %d, %v; want id %d", again, err, id)
 	}
@@ -169,11 +169,34 @@ func TestUserSettingsAndReopen(t *testing.T) {
 	}
 }
 
+func TestUserIsFoundByGitHubID(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	first, err := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := s.UpsertUser(ctx, 1, "alice-renamed", "ghp_a2")
+	if err != nil || renamed != first {
+		t.Fatalf("sign-in after a rename = %d, %v; want id %d", renamed, err, first)
+	}
+	if u, err := s.User(ctx, first); err != nil || u.Login != "alice-renamed" || u.GitHubToken != "ghp_a2" {
+		t.Fatalf("renamed user = %+v, %v", u, err)
+	}
+	other, err := s.UpsertUser(ctx, 2, "alice-renamed", "ghp_b")
+	if err != nil || other == first {
+		t.Fatalf("another GitHub user with the same login = %d, %v; want a new row", other, err)
+	}
+	if u, err := s.User(ctx, first); err != nil || u.GitHubToken != "ghp_a2" {
+		t.Errorf("the first user changed: %+v, %v", u, err)
+	}
+}
+
 func TestUserIDsWithRepo(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	ctx := context.Background()
-	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
-	s.UpsertUser(ctx, "bob", "ghp_b")
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	s.UpsertUser(ctx, 2, "bob", "ghp_b")
 	repo := "getsentry/sentry-cocoa"
 	if err := s.UpdateSettings(ctx, alice, Settings{Repo: &repo}); err != nil {
 		t.Fatal(err)
@@ -187,8 +210,8 @@ func TestUserIDsWithRepo(t *testing.T) {
 func TestSessionsByHash(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	ctx := context.Background()
-	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
-	bob, _ := s.UpsertUser(ctx, "bob", "ghp_b")
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
 
 	aliceToken, err := s.CreateSession(ctx, alice)
 	if err != nil {
@@ -250,7 +273,7 @@ func (s *Store) sessionCount(t *testing.T) int {
 func TestSessionsExpireWhenIdle(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	ctx := context.Background()
-	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
 	active, _ := s.CreateSession(ctx, alice)
 	old, _ := s.CreateSession(ctx, alice)
 	expired, _ := s.CreateSession(ctx, alice)
@@ -282,8 +305,8 @@ func TestSessionsExpireWhenIdle(t *testing.T) {
 func TestDeleteUserSessions(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	ctx := context.Background()
-	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
-	bob, _ := s.UpsertUser(ctx, "bob", "ghp_b")
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
 	first, _ := s.CreateSession(ctx, alice)
 	second, _ := s.CreateSession(ctx, alice)
 	bobSession, _ := s.CreateSession(ctx, bob)
@@ -305,7 +328,7 @@ func TestRawRowsHoldNoPlaintext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	s := openStore(t, path, newKey(t))
 	ctx := context.Background()
-	id, err := s.UpsertUser(ctx, "alwx", githubToken)
+	id, err := s.UpsertUser(ctx, 3, "alwx", githubToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,8 +394,8 @@ func TestReviewsByUserAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	alice, _ := s.UpsertUser(ctx, "alice", "ghp_a")
-	bob, _ := s.UpsertUser(ctx, "bob", "ghp_b")
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
 	repo := "getsentry/sentry-cocoa"
 	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 

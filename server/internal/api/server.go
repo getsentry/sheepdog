@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -136,7 +137,7 @@ func (s *Server) authed(handler func(http.ResponseWriter, *http.Request, store.U
 		}
 		id, err := s.store.SessionUserID(r.Context(), token)
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusUnauthorized, "The session is not valid. Sign in again")
+			writeError(w, http.StatusUnauthorized, sessionNotValid)
 			return
 		}
 		if err != nil {
@@ -208,6 +209,8 @@ func internalError(w http.ResponseWriter, err error) {
 
 const notAllowed = "This GitHub account is not allowed on this server"
 
+const sessionNotValid = "The session is not valid. Sign in again"
+
 const rejectedAgain = "GitHub rejected the token. Sign in again with a new token"
 
 // GitHub messages reach the client, so that it can show SSO links and permission errors.
@@ -237,6 +240,7 @@ type limiter struct {
 	limit    int
 	window   time.Duration
 	failures map[string]*window
+	swept    time.Time
 }
 
 type window struct {
@@ -266,13 +270,34 @@ func (l *limiter) fail(key string) {
 	w.count++
 }
 
-// current deletes the windows that ended and returns the window of the key, or nil.
+// current returns the window of the key, or nil when it ended. It deletes all ended windows at most once in each window period.
 func (l *limiter) current(key string) *window {
 	now := time.Now()
-	for k, w := range l.failures {
-		if now.Sub(w.start) >= l.window {
-			delete(l.failures, k)
+	if now.Sub(l.swept) >= l.window {
+		l.swept = now
+		for k, w := range l.failures {
+			if now.Sub(w.start) >= l.window {
+				delete(l.failures, k)
+			}
 		}
 	}
-	return l.failures[key]
+	w := l.failures[key]
+	if w != nil && now.Sub(w.start) >= l.window {
+		delete(l.failures, key)
+		return nil
+	}
+	return w
+}
+
+// signInKey is the /64 prefix of an IPv6 address, because one client usually holds a full /64.
+func signInKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	if addr = addr.Unmap(); addr.Is4() {
+		return addr.String()
+	}
+	prefix, _ := addr.WithZone("").Prefix(64)
+	return prefix.String()
 }

@@ -21,7 +21,8 @@ const SessionIdleTimeout = 30 * 24 * time.Hour
 const schema = `
 CREATE TABLE IF NOT EXISTS users (
 	id INTEGER PRIMARY KEY,
-	login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+	github_id INTEGER NOT NULL UNIQUE,
+	login TEXT NOT NULL,
 	github_token_enc BLOB NOT NULL,
 	openrouter_key_enc BLOB,
 	model TEXT NOT NULL DEFAULT '',
@@ -98,8 +99,9 @@ const (
 	openRouterKeyColumn = "openrouter_key_enc"
 )
 
-// UpsertUser creates the user or replaces the GitHub token of an existing user, and returns the user ID.
-func (s *Store) UpsertUser(ctx context.Context, login, githubToken string) (int64, error) {
+// UpsertUser finds the user by the GitHub user ID, because another person can take a login after a rename.
+// It creates the user or replaces the login and the GitHub token, and returns the user ID.
+func (s *Store) UpsertUser(ctx context.Context, githubID int64, login, githubToken string) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -108,10 +110,10 @@ func (s *Store) UpsertUser(ctx context.Context, login, githubToken string) (int6
 	// The sealed token needs the user ID, so a new user gets an empty token first.
 	var id int64
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO users (login, github_token_enc, created_at) VALUES (?, x'', ?)
-		ON CONFLICT (login) DO UPDATE SET github_token_enc = github_token_enc
+		INSERT INTO users (github_id, login, github_token_enc, created_at) VALUES (?, ?, x'', ?)
+		ON CONFLICT (github_id) DO UPDATE SET login = excluded.login
 		RETURNING id`,
-		login, now(),
+		githubID, login, now(),
 	).Scan(&id)
 	if err != nil {
 		return 0, err

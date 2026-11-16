@@ -26,28 +26,32 @@ import (
 const (
 	aliceToken  = "ghp_aliceToken0000"
 	aliceToken2 = "ghp_aliceSecondToken"
-	bobToken    = "ghp_bobToken0000"
-	carolToken  = "ghp_carolNoOrgScope"
-	eveToken    = "ghp_eveNotAllowed"
-	daveToken   = "ghp_daveNotAllowedNoOrgScope"
-	aliceKey    = "sk-or-v1-aliceKey"
-	bobWrongKey = "sk-or-v1-bobWrongKey"
-	aliceRepo   = "getsentry/alice-repo"
-	bobRepo     = "getsentry/bob-repo"
+	// newAliceToken belongs to another GitHub user, who took the login alice after a rename.
+	newAliceToken = "ghp_newAliceToken000"
+	bobToken      = "ghp_bobToken0000"
+	carolToken    = "ghp_carolNoOrgScope"
+	eveToken      = "ghp_eveNotAllowed"
+	daveToken     = "ghp_daveNotAllowedNoOrgScope"
+	aliceKey      = "sk-or-v1-aliceKey"
+	bobWrongKey   = "sk-or-v1-bobWrongKey"
+	aliceRepo     = "getsentry/alice-repo"
+	bobRepo       = "getsentry/bob-repo"
 )
 
 type identity struct {
+	id            int64
 	login, scopes string
 	number        int
 }
 
 var identities = map[string]identity{
-	aliceToken:  {"alice", "read:org, repo", 101},
-	aliceToken2: {"alice", "repo, read:org", 101},
-	bobToken:    {"bob", "repo, read:org", 202},
-	carolToken:  {"carol", "repo", 303},
-	eveToken:    {"eve", "repo, read:org", 404},
-	daveToken:   {"dave", "repo", 505},
+	aliceToken:    {1, "alice", "read:org, repo", 101},
+	aliceToken2:   {1, "alice", "repo, read:org", 101},
+	newAliceToken: {6, "alice", "repo, read:org", 101},
+	bobToken:      {2, "bob", "repo, read:org", 202},
+	carolToken:    {3, "carol", "repo", 303},
+	eveToken:      {4, "eve", "repo, read:org", 404},
+	daveToken:     {5, "dave", "repo", 505},
 }
 
 // stalledPull is a PR number whose detail request waits until the request ends.
@@ -93,7 +97,7 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/user" {
 		w.Header().Set("X-OAuth-Scopes", id.scopes)
-		fmt.Fprintf(w, `{"login":%q}`, id.login)
+		fmt.Fprintf(w, `{"login":%q,"id":%d}`, id.login, id.id)
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -283,7 +287,7 @@ func (h *harness) do(method, path, session string, body any) (int, []byte) {
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
-	for _, secret := range []string{aliceToken, aliceToken2, bobToken, carolToken, eveToken, daveToken, aliceKey, bobWrongKey} {
+	for _, secret := range []string{aliceToken, aliceToken2, newAliceToken, bobToken, carolToken, eveToken, daveToken, aliceKey, bobWrongKey} {
 		if bytes.Contains(data, []byte(secret)) {
 			h.t.Fatalf("%s %s response contains a secret", method, path)
 		}
@@ -673,13 +677,13 @@ func TestClearingRepoStopsPoller(t *testing.T) {
 func TestPollerStartsForStoredUsers(t *testing.T) {
 	h := newHarness(t, func(s *Server) {
 		db := s.store
-		id, err := db.UpsertUser(context.Background(), "alice", aliceToken)
+		id, err := db.UpsertUser(context.Background(), 1, "alice", aliceToken)
 		if err != nil {
 			t.Fatal(err)
 		}
 		repo := aliceRepo
 		db.UpdateSettings(context.Background(), id, store.Settings{Repo: &repo})
-		db.UpsertUser(context.Background(), "bob", bobToken)
+		db.UpsertUser(context.Background(), 2, "bob", bobToken)
 	})
 	deadline := time.Now().Add(5 * time.Second)
 	for h.github.pollCount(aliceToken) < 2 {

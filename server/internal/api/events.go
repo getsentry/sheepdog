@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -41,10 +42,16 @@ func newHub() *hub {
 	return &hub{streams: map[int64]map[*subscriber]struct{}{}}
 }
 
-// subscribe returns false when the user already has maxStreams open streams.
+// subscribe ends the older streams of the session, and returns false when the user already has maxStreams open streams.
+// A client keeps one stream for each session, so an older stream of the session is a dead connection.
 func (h *hub) subscribe(userID int64, session string) (*subscriber, func(), bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	for sub := range h.streams[userID] {
+		if sub.session == session {
+			h.end(userID, sub)
+		}
+	}
 	if len(h.streams[userID]) >= maxStreams {
 		return nil, nil, false
 	}
@@ -127,6 +134,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, user store.User)
 		return
 	}
 	defer unsubscribe()
+	// A sign-out after authed and before subscribe found no stream to end, so the session is checked again.
+	if _, err := s.store.SessionUserID(r.Context(), session); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusUnauthorized, sessionNotValid)
+		return
+	} else if err != nil {
+		internalError(w, err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
