@@ -3,22 +3,24 @@ import SwiftUI
 
 struct MainView: View {
     @Environment(AppModel.self) private var model
-    @AppStorage("repo") private var repo = ""
-    @State private var selection: PRRow.ID?
+    @State private var selection: API.Row.ID?
+
+    private var rows: [API.Row] { model.requests?.rows ?? [] }
 
     var body: some View {
         NavigationSplitView {
             Group {
-                if repo.isEmpty {
+                if model.requests == nil && model.settings == nil {
+                    StatusList()
+                } else if model.repo.isEmpty {
                     placeholder("Select a repository")
                 } else {
                     RequestList(selection: $selection)
-                        .task(id: repo) { await model.poll(repo: repo) }
                 }
             }
             .toolbar {
                 ToolbarItem {
-                    RepoPicker(repo: $repo)
+                    RepoPicker()
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -40,9 +42,9 @@ struct MainView: View {
             .navigationSplitViewColumnWidth(min: 360, ideal: 440)
         } detail: {
             Group {
-                if let row = model.rows.first(where: { $0.id == selection }) {
-                    PRDetailView(repo: repo, row: row)
-                        .id("\(repo)#\(row.number)")
+                if let row = rows.first(where: { $0.id == selection }) {
+                    PRDetailView(repo: model.repo, row: row)
+                        .id(AppModel.key(repo: model.repo, number: row.number))
                 } else {
                     placeholder("Select a pull request")
                 }
@@ -50,9 +52,9 @@ struct MainView: View {
             // AppKit starts the toolbar background of this column a few points left of the divider, over the sidebar.
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
-        .navigationTitle(model.rows.first { $0.id == selection }?.title ?? "")
+        .navigationTitle(rows.first { $0.id == selection }?.title ?? "")
         .frame(minWidth: 820, minHeight: 480)
-        .onChange(of: repo) { selection = nil }
+        .onChange(of: model.repo) { selection = nil }
         .task { await model.loadRepositories() }
     }
 }
@@ -71,10 +73,10 @@ private struct TaskPanel: View {
                     ProgressView()
                         .controlSize(.small)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(task.work.title)
+                        Text(task.title)
                             .lineLimit(1)
                         HStack(spacing: 4) {
-                            Text(task.work.subtitle)
+                            Text(task.subtitle)
                             Text("·")
                             Text(task.startedAt, style: .timer)
                                 .monospacedDigit()
@@ -85,7 +87,7 @@ private struct TaskPanel: View {
                     }
                     Spacer()
                     Button {
-                        task.cancel()
+                        Task { await model.cancelTask(task.id) }
                     } label: {
                         Image(systemName: "stop.circle")
                     }
@@ -101,7 +103,6 @@ private struct TaskPanel: View {
 
 private struct RepoPicker: View {
     @Environment(AppModel.self) private var model
-    @Binding var repo: String
     @State private var isOpen = false
 
     var body: some View {
@@ -109,7 +110,7 @@ private struct RepoPicker: View {
             isOpen.toggle()
         } label: {
             HStack {
-                Text(repo.isEmpty ? "Select a repository" : repo)
+                Text(model.repo.isEmpty ? "Select a repository" : model.repo)
                     .font(.headline)
                 Image(systemName: "chevron.down")
                     .font(.caption)
@@ -117,9 +118,9 @@ private struct RepoPicker: View {
         }
         .buttonStyle(.borderless)
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
-            SearchList(prompt: "Search repositories", items: model.repositories.isEmpty ? nil : model.repositories) { name in
-                repo = name
+            SearchList(prompt: "Search repositories", items: model.repositories, error: model.repositoriesError) { name in
                 isOpen = false
+                Task { await model.selectRepo(name) }
             }
         }
     }
@@ -174,37 +175,60 @@ struct SearchList: View {
     }
 }
 
+// Shown before the first answer of the server.
+private struct StatusList: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ErrorBanner()
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+private struct ErrorBanner: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let error = model.error ?? model.requests?.error {
+            Text(error)
+                .foregroundStyle(.white)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(.red)
+        }
+    }
+}
+
 private struct RequestList: View {
     @Environment(AppModel.self) private var model
-    @Binding var selection: PRRow.ID?
+    @Binding var selection: API.Row.ID?
+
+    private var rows: [API.Row] { model.requests?.rows ?? [] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let error = model.error {
-                Text(error)
-                    .foregroundStyle(.white)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(.red)
-            }
-            if let lastRefresh = model.lastRefresh {
+            ErrorBanner()
+            if let lastRefresh = model.requests?.fetchedAt {
                 Text("Updated at \(lastRefresh, format: .dateTime.hour().minute().second())")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
                     .padding(.vertical, 6)
             }
-            if model.lastRefresh == nil && model.error == nil {
+            if model.requests?.fetchedAt == nil && model.error == nil && model.requests?.error == nil {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if model.rows.isEmpty {
+            } else if rows.isEmpty {
                 placeholder("No review requests")
             } else {
-                List(model.rows, selection: $selection) { row in
+                List(rows, selection: $selection) { row in
                     RowView(row: row)
                 }
-                .contextMenu(forSelectionType: PRRow.ID.self) { ids in
+                .contextMenu(forSelectionType: API.Row.ID.self) { ids in
                     Button("Open on GitHub") { open(ids) }
                 } primaryAction: { ids in
                     open(ids)
@@ -213,15 +237,15 @@ private struct RequestList: View {
         }
     }
 
-    private func open(_ ids: Set<PRRow.ID>) {
-        for row in model.rows where ids.contains(row.id) {
+    private func open(_ ids: Set<API.Row.ID>) {
+        for row in rows where ids.contains(row.id) {
             NSWorkspace.shared.open(row.url)
         }
     }
 }
 
 private struct RowView: View {
-    let row: PRRow
+    let row: API.Row
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {

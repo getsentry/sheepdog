@@ -8,11 +8,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
-
-    // A pending gh auth login would otherwise keep polling GitHub after the app quits.
-    func applicationWillTerminate(_ notification: Notification) {
-        model.stopLogin()
-    }
 }
 
 @main
@@ -22,7 +17,7 @@ struct ReviewQueueApp: App {
     var body: some Scene {
         Window("Review Queue", id: "main") {
             Group {
-                if case .signedIn = delegate.model.auth {
+                if delegate.model.auth == .signedIn {
                     MainView()
                 } else {
                     LoginView()
@@ -34,6 +29,7 @@ struct ReviewQueueApp: App {
         }
         Settings {
             SettingsView()
+                .environment(delegate.model)
         }
     }
 }

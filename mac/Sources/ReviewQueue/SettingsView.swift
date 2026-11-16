@@ -1,62 +1,91 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(AppModel.self) private var model
     @State private var apiKey = ""
-    // nil until the key is read from the Keychain.
-    @State private var savedKey: String?
-    @State private var keychainError: String?
-    @AppStorage("classificationModel") private var model = ""
+    @State private var isSaving = false
+    @State private var saved = false
     @State private var models: [String]?
     @State private var modelsError: String?
     @State private var isPickerOpen = false
 
     var body: some View {
+        Group {
+            if model.auth == .signedIn {
+                form
+            } else {
+                Text("Sign in to change the settings.")
+                    .foregroundStyle(.secondary)
+                    .padding(40)
+            }
+        }
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var form: some View {
         Form {
-            SecureField("OpenRouter API key", text: $apiKey, prompt: Text("sk-or-v1-…"))
-            if let keychainError {
-                Text(keychainError)
-                    .foregroundStyle(.red)
+            // The address stays fixed while signed in, so that the session token never goes to another server.
+            LabeledContent("Server address", value: model.serverURL)
+            LabeledContent("OpenRouter API key") {
+                HStack {
+                    SecureField("OpenRouter API key", text: $apiKey, prompt: Text(model.settings?.hasOpenRouterKey == true ? "Saved on the server" : "sk-or-v1-…"))
+                        .labelsHidden()
+                        .onSubmit(saveKey)
+                    if saved {
+                        Text("Saved")
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Save", action: saveKey)
+                        .disabled(apiKey.isEmpty || isSaving)
+                }
             }
             LabeledContent("Classification model") {
                 Button {
                     isPickerOpen.toggle()
                 } label: {
                     HStack {
-                        Text(model.isEmpty ? "Select a model" : model)
+                        Text(model.settings.map { $0.model.isEmpty ? "Select a model" : $0.model } ?? "")
                         Image(systemName: "chevron.down")
                             .font(.caption)
                     }
                 }
-                .disabled(apiKey.isEmpty)
+                .disabled(model.settings?.hasOpenRouterKey != true)
                 .popover(isPresented: $isPickerOpen, arrowEdge: .bottom) {
                     SearchList(prompt: "Search models", items: models, error: modelsError) { id in
-                        model = id
                         isPickerOpen = false
+                        Task { await model.selectModel(id) }
                     }
                     .task { await loadModels() }
                 }
             }
-        }
-        .formStyle(.grouped)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
-        .task {
-            do {
-                let key = try Keychain.read(OpenRouter.keyAccount) ?? ""
-                savedKey = key
-                apiKey = key
-            } catch {
-                keychainError = error.localizedDescription
+            if let error = model.error {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Spacer()
+                Button("Sign out") {
+                    Task { await model.signOut() }
+                }
             }
         }
-        .task(id: apiKey) {
-            models = nil
-            modelsError = nil
-            guard let savedKey, apiKey != savedKey else { return }
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            Keychain.save(apiKey, for: OpenRouter.keyAccount)
-            self.savedKey = apiKey
+        .formStyle(.grouped)
+        .task { await model.loadSettings() }
+        .onChange(of: apiKey) { if !apiKey.isEmpty { saved = false } }
+    }
+
+    private func saveKey() {
+        guard !apiKey.isEmpty, !isSaving else { return }
+        isSaving = true
+        Task {
+            if await model.saveOpenRouterKey(apiKey) {
+                apiKey = ""
+                saved = true
+                models = nil
+            }
+            isSaving = false
         }
     }
 
@@ -64,7 +93,7 @@ struct SettingsView: View {
         guard models == nil else { return }
         modelsError = nil
         do {
-            models = try await OpenRouter.models(apiKey: apiKey)
+            models = try await model.models()
         } catch {
             modelsError = error.localizedDescription
         }

@@ -1,6 +1,8 @@
 # Review Queue
 
-A macOS app that shows the open pull requests in one GitHub repository where a review is requested from you or from one of your teams. It uses the [GitHub CLI](https://cli.github.com) (`gh`) for all GitHub access. Install it with `brew install gh`.
+A macOS app that shows the open pull requests in one GitHub repository where a review is requested from you or from one of your teams.
+
+The app is a client of the Review Queue server. It gets all data from the server and does not call GitHub or OpenRouter. Start a server first. See [server/README.md](../server/README.md).
 
 Run all commands in this directory.
 
@@ -18,8 +20,6 @@ scripts/bundle.sh
 open build/ReviewQueue.app
 ```
 
-If `gh` has no GitHub login, the app shows a "Sign in with GitHub" button. To try the login screen without a change to your `gh` login, start the app with an empty `gh` configuration directory:
+To sign in, enter the server address, for example `http://127.0.0.1:8080`, and a GitHub classic personal access token with the scopes `repo` and `read:org`. The "Create token on GitHub" button opens the GitHub page for a new token with these scopes. The app sends the token to the server once and does not store it.
 
-```sh
-GH_CONFIG_DIR=$(mktemp -d) build/ReviewQueue.app/Contents/MacOS/ReviewQueue
-```
+The app stores the session token of the server in the Keychain (service `com.alwx.reviewqueue`, account `session-token`) and the server address in user defaults (`serverURL`). To use another server, click "Sign out" in Settings and enter the new address on the sign-in screen.

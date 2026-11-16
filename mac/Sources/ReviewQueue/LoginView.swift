@@ -3,43 +3,64 @@ import SwiftUI
 
 struct LoginView: View {
     @Environment(AppModel.self) private var model
+    @State private var server = ""
+    @State private var token = ""
+    @State private var isSigningIn = false
+
+    private static let newTokenURL = URL(string: "https://github.com/settings/tokens/new?scopes=repo,read:org&description=Review%20Queue")!
 
     var body: some View {
-        VStack(spacing: 16) {
-            switch model.auth {
-            case .checking, .signedIn:
-                ProgressView()
-            case .ghMissing:
-                Text(#"gh CLI not found. Install it with "brew install gh"."#)
-            case .signedOut:
-                Button("Sign in with GitHub") {
-                    Task { await model.signIn() }
-                }
-                .controlSize(.large)
-                if let error = model.error {
-                    Text(error)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-            case .pending(let code):
-                Text("Enter this code on GitHub:")
-                Text(code)
-                    .font(.system(size: 36, weight: .semibold, design: .monospaced))
+        switch model.auth {
+        case .checking, .signedIn:
+            ProgressView()
+        case .signedOut:
+            form
+        }
+    }
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Sign in to Review Queue")
+                .font(.title2.bold())
+            Form {
+                TextField("Server address", text: $server, prompt: Text("http://127.0.0.1:8080"))
+                SecureField("GitHub token", text: $token, prompt: Text("ghp_…"))
+                    .onSubmit(signIn)
+            }
+            Text("Use a classic personal access token with the scopes repo and read:org. If your organization uses SAML single sign-on, click Configure SSO next to the token on GitHub and authorize it for the organization.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error = model.signInError {
+                Text(error)
+                    .foregroundStyle(.red)
                     .textSelection(.enabled)
-                HStack {
-                    Button("Copy code") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(code, forType: .string)
-                    }
-                    Button("Open GitHub") {
-                        NSWorkspace.shared.open(URL(string: "https://github.com/login/device")!)
-                    }
-                    .keyboardShortcut(.defaultAction)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Create token on GitHub") { NSWorkspace.shared.open(Self.newTokenURL) }
+                Spacer()
+                if isSigningIn {
+                    ProgressView()
+                        .controlSize(.small)
                 }
-                ProgressView()
-                    .controlSize(.small)
+                Button("Sign in", action: signIn)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isSigningIn || server.isEmpty || token.isEmpty)
             }
         }
-        .padding()
+        .padding(24)
+        .frame(width: 460)
+        .onAppear { server = model.serverURL }
+    }
+
+    private func signIn() {
+        guard !isSigningIn, !server.isEmpty, !token.isEmpty else { return }
+        isSigningIn = true
+        Task {
+            await model.signIn(server: server, githubToken: token)
+            isSigningIn = false
+            if model.auth == .signedIn { token = "" }
+        }
     }
 }

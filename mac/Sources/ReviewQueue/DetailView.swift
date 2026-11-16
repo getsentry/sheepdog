@@ -4,8 +4,8 @@ import SwiftUI
 struct PRDetailView: View {
     @Environment(AppModel.self) private var model
     let repo: String
-    let row: PRRow
-    @State private var detail: PRDetail?
+    let row: API.Row
+    @State private var detail: API.PullRequest?
     @State private var lines: [BodyLine] = []
     @State private var error: String?
 
@@ -21,15 +21,13 @@ struct PRDetailView: View {
                     }
                     if let detail {
                         facts(detail)
-                        switch reviewState {
-                        case .done(let result):
-                            ReviewSection(result: result, prUpdatedAt: row.updatedAt)
-                        case .failed(let message):
-                            Text(message)
+                        if let reviewError {
+                            Text(reviewError)
                                 .foregroundStyle(.red)
                                 .textSelection(.enabled)
-                        case .running, nil:
-                            EmptyView()
+                        }
+                        if let review {
+                            ReviewSection(review: review, prUpdatedAt: row.updatedAt)
                         }
                         Divider()
                         if lines.isEmpty {
@@ -51,9 +49,10 @@ struct PRDetailView: View {
         .task(id: row.updatedAt) { await load() }
     }
 
-    private var reviewState: ReviewState? {
-        model.reviews[ReviewWork.key(repo: repo, number: row.number)]
-    }
+    private var key: String { AppModel.key(repo: repo, number: row.number) }
+    private var review: API.Review? { model.reviews[key] }
+    private var reviewError: String? { model.reviewErrors[key] }
+    private var isReviewing: Bool { model.isReviewing(repo: repo, number: row.number) }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -66,22 +65,21 @@ struct PRDetailView: View {
                 }
                 Spacer()
                 Button {
-                    guard let detail else { return }
-                    model.startReview(repo: repo, row: row, detail: detail)
+                    Task { await model.startReview(repo: repo, number: row.number) }
                 } label: {
-                    if reviewState == .running {
+                    if isReviewing {
                         HStack(spacing: 6) {
                             ProgressView()
                                 .controlSize(.small)
                             Text("Reviewing…")
                         }
-                    } else if case .done = reviewState {
+                    } else if review != nil {
                         Text("Review again")
                     } else {
                         Text("AI Review")
                     }
                 }
-                .disabled(detail == nil || reviewState == .running)
+                .disabled(detail == nil || isReviewing)
                 Button("Open on GitHub") { NSWorkspace.shared.open(row.url) }
             }
             .foregroundStyle(.secondary)
@@ -94,8 +92,8 @@ struct PRDetailView: View {
         }
     }
 
-    private func facts(_ detail: PRDetail) -> some View {
-        let checks = summarize(detail.statusCheckRollup)
+    private func facts(_ detail: API.PullRequest) -> some View {
+        let checks = detail.checks
         return Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
             fact("Created") { Text(detail.createdAt, format: .dateTime) }
             fact("Changes") {
@@ -108,7 +106,7 @@ struct PRDetailView: View {
             }
             fact("Review") { Text(humanize(detail.reviewDecision.isEmpty ? "NONE" : detail.reviewDecision)) }
             fact("Checks") {
-                if detail.statusCheckRollup.isEmpty {
+                if checks.total == 0 {
                     Text("None")
                 } else {
                     Text(checks.text)
@@ -116,13 +114,13 @@ struct PRDetailView: View {
                 }
             }
             fact("Requested") {
-                Text(detail.reviewRequests.map(\.displayName).joined(separator: ", "))
+                Text(detail.reviewRequests.joined(separator: ", "))
             }
             if !detail.latestReviews.isEmpty {
                 fact("Reviews") {
                     VStack(alignment: .leading, spacing: 2) {
-                        ForEach(detail.latestReviews, id: \.author.login) { review in
-                            Text("\(review.author.login): \(humanize(review.state))")
+                        ForEach(detail.latestReviews, id: \.author) { review in
+                            Text("\(review.author): \(humanize(review.state))")
                         }
                     }
                 }
@@ -130,7 +128,7 @@ struct PRDetailView: View {
             if !detail.labels.isEmpty {
                 fact("Labels") {
                     HStack(spacing: 4) {
-                        ForEach(detail.labels, id: \.name) { capsule($0.name, color: .accentColor) }
+                        ForEach(detail.labels, id: \.self) { capsule($0, color: .accentColor) }
                     }
                 }
             }
@@ -148,7 +146,9 @@ struct PRDetailView: View {
 
     private func load() async {
         do {
-            let fetched = try await GH.pullRequest(repo: repo, number: row.number)
+            async let review: Void = model.loadReview(repo: repo, number: row.number)
+            let fetched = try await model.pullRequest(repo: repo, number: row.number)
+            await review
             guard !Task.isCancelled else { return }
             lines = bodyLines(fetched.body)
             detail = fetched
@@ -161,34 +161,34 @@ struct PRDetailView: View {
 }
 
 private struct ReviewSection: View {
-    let result: ReviewResult
+    let review: API.Review
     let prUpdatedAt: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(color(result.review.risk))
+                    .fill(color(review.risk))
                     .frame(width: 12, height: 12)
-                Text(label(result.review.risk))
+                Text(label(review.risk))
                     .font(.headline)
                 Spacer()
-                Text("\(result.model), \(result.date.formatted(date: .omitted, time: .shortened))")
+                Text("\(review.model), \(review.createdAt.formatted(date: .omitted, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if prUpdatedAt > result.prUpdatedAt {
+            if prUpdatedAt > review.prUpdatedAt {
                 Text("The PR changed after this review.")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-            if result.diffTruncated {
-                Text("The diff was too large. The model saw only the first \(ReviewPrompt.maxDiffCharacters.formatted()) characters.")
+            if review.diffTruncated {
+                Text("The diff was too large. The model saw only the first 200,000 characters.")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-            Text(result.review.summary)
-            ForEach(result.review.findings, id: \.self) { finding in
+            Text(review.summary)
+            ForEach(review.findings, id: \.self) { finding in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         capsule(finding.severity.rawValue.capitalized, color: color(finding.severity))
@@ -204,10 +204,10 @@ private struct ReviewSection: View {
         }
         .textSelection(.enabled)
         .padding(12)
-        .background(color(result.review.risk).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .background(color(review.risk).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private func label(_ risk: Review.Risk) -> String {
+    private func label(_ risk: API.Review.Risk) -> String {
         switch risk {
         case .green: "Low risk"
         case .yellow: "Needs a careful review"
@@ -215,7 +215,7 @@ private struct ReviewSection: View {
         }
     }
 
-    private func color(_ risk: Review.Risk) -> Color {
+    private func color(_ risk: API.Review.Risk) -> Color {
         switch risk {
         case .green: .green
         case .yellow: .yellow
@@ -223,7 +223,7 @@ private struct ReviewSection: View {
         }
     }
 
-    private func color(_ severity: Review.Finding.Severity) -> Color {
+    private func color(_ severity: API.Review.Finding.Severity) -> Color {
         switch severity {
         case .high: .red
         case .medium: .orange
