@@ -1,8 +1,8 @@
 # Review Queue server
 
-The Review Queue server finds the open pull requests (PRs) in one GitHub repository where a review is requested from you or from one of your teams. It also runs AI reviews of PRs with [OpenRouter](https://openrouter.ai). The Mac app in `../mac` is a client of this server.
+The Review Queue server finds the open pull requests (PRs) in one GitHub repository where a review is requested from you or from one of your teams. It also runs AI reviews of PRs and gives PRs a danger score from 1 to 10 with [OpenRouter](https://openrouter.ai). The Mac app in `../mac` is a client of this server.
 
-The server serves several users. Each user signs in with an own GitHub token and has an own OpenRouter key, model, repository, and reviews. The server checks GitHub every 30 seconds for each user who has selected a repository, also when no client is connected. The server keeps its data in one SQLite file. It encrypts the GitHub tokens and the OpenRouter keys in that file.
+The server serves several users. Each user signs in with an own GitHub token and has an own OpenRouter key, model, repository, reviews, and classifications. The server checks GitHub every 30 seconds for each user who has selected a repository, also when no client is connected. The server keeps its data in one SQLite file. It encrypts the GitHub tokens and the OpenRouter keys in that file.
 
 ## Create a GitHub token
 
@@ -62,7 +62,7 @@ The server has no C dependencies. To build for a Linux server on a Mac:
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/reviewqueue
 ```
 
-The server stops on SIGINT or SIGTERM. It cancels the running AI reviews. Finished reviews stay in the database. A request that waits for GitHub or OpenRouter at that time gets status 503 with the text `The server is shutting down`.
+The server stops on SIGINT or SIGTERM. It cancels the running reviews and classifications. Finished ones stay in the database. A request that waits for GitHub or OpenRouter at that time gets status 503 with the text `The server is shutting down`.
 
 ## TLS
 
@@ -90,9 +90,9 @@ After 10 failed sign-ins in a minute from one client IP address, the server reje
 
 All requests and responses use JSON. An error response has the form `{"error": "text"}`. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>`. A missing, unknown, or ended session gets status 401. A login that is no longer in `REVIEWQ_ALLOWED_LOGINS` gets status 403.
 
-GitHub repository names ignore case. The server changes them to lower case, so settings, review requests, tasks, review events, and stored reviews always use lower case names.
+GitHub repository names ignore case. The server changes them to lower case, so settings, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
 
-An AI review sends at most 200,000 characters of the diff. The server counts Unicode code points, not bytes and not visible characters. GitHub responses can have at most 50 MB for a diff and 10 MB for other data, and OpenRouter responses at most 10 MB. A larger response gives an error.
+A review or a classification sends at most 200,000 characters of the diff. The server counts Unicode code points, not bytes and not visible characters. GitHub responses can have at most 50 MB for a diff and 10 MB for other data, and OpenRouter responses at most 10 MB. A larger response gives an error.
 
 | Route | Purpose |
 | --- | --- |
@@ -107,8 +107,10 @@ An AI review sends at most 200,000 characters of the diff. The server counts Uni
 | `GET /api/repos/{owner}/{name}/pulls/{number}` | The details of a PR. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/review` | The latest stored AI review of the PR, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |
+| `GET /api/repos/{owner}/{name}/pulls/{number}/classification` | The latest stored classification of the PR, with a `score` from 1 (no danger, can be merged) to 10 (extreme danger) and a `reason`, or 404. |
+| `POST /api/repos/{owner}/{name}/pulls/{number}/classification` | Start a classification. Returns the task, or 409 if a classification of the PR is already running. A review and a classification of one PR can run at the same time. |
 | `GET /api/tasks` | The running tasks of the user. |
 | `DELETE /api/tasks/{id}` | Stop a task. |
-| `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, and `review`. A new stream of a session ends the older streams of that session. A user can open at most 8 streams at a time. One more stream gets status 429. |
+| `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, `review`, and `classification`. A new stream of a session ends the older streams of that session. A user can open at most 8 streams at a time. One more stream gets status 429. |
 
-A `requests` or `tasks` event has the full current state. A `review` event is sent once when a review is stored or fails, also when the task was stopped after the review was stored. The server never skips a `review` event. If a client reads its stream too slowly, the server ends that stream instead, and the client must connect again. A new stream starts with the current `requests` and `tasks` events, and the client must load the stored reviews again with `GET .../review`.
+A `requests` or `tasks` event has the full current state. A `review` or `classification` event is sent once when the result is stored or fails, also when the task was stopped after the result was stored. The server never skips these events. If a client reads its stream too slowly, the server ends that stream instead, and the client must connect again. A new stream starts with the current `requests` and `tasks` events, and the client must load the stored reviews and classifications again with `GET .../review` and `GET .../classification`.

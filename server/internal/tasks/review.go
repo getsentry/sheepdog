@@ -38,7 +38,7 @@ func ReviewKey(repo string, number int) string {
 
 func (w ReviewWork) Kind() string     { return "review" }
 func (w ReviewWork) Key() string      { return ReviewKey(w.Repo, w.Number) }
-func (w ReviewWork) Title() string    { return fmt.Sprintf("AI review of #%d", w.Number) }
+func (w ReviewWork) Title() string    { return fmt.Sprintf("Review of #%d", w.Number) }
 func (w ReviewWork) Subtitle() string { return w.Repo }
 
 func (w ReviewWork) Run(ctx context.Context) {
@@ -63,29 +63,38 @@ func (w ReviewWork) report(ctx context.Context, result store.Review, err error) 
 	w.Publish(event)
 }
 
-func (w ReviewWork) review(ctx context.Context) (store.Review, error) {
-	detail, err := w.GitHub.PullRequest(ctx, w.Repo, w.Number)
+// prompt loads the PR, its diff, and AGENTS.md from the base branch, so that a PR cannot change its own instructions.
+func prompt(ctx context.Context, gh *github.Client, repo string, number int) (github.PRDetail, review.Input, error) {
+	detail, err := gh.PullRequest(ctx, repo, number)
 	if err != nil {
-		return store.Review{}, err
+		return github.PRDetail{}, review.Input{}, err
 	}
-	diff, err := w.GitHub.Diff(ctx, w.Repo, w.Number)
+	diff, err := gh.Diff(ctx, repo, number)
 	if err != nil {
-		return store.Review{}, err
+		return github.PRDetail{}, review.Input{}, err
 	}
-	agents, err := w.GitHub.AgentsFile(ctx, w.Repo, detail.BaseRefName)
+	agents, err := gh.AgentsFile(ctx, repo, detail.BaseRefName)
 	if err != nil {
-		return store.Review{}, err
+		return github.PRDetail{}, review.Input{}, err
 	}
-	result, truncated, err := review.Request(ctx, w.OpenRouter, w.Model, review.Input{
-		Repo:        w.Repo,
-		Number:      w.Number,
+	return detail, review.Input{
+		Repo:        repo,
+		Number:      number,
 		Title:       detail.Title,
 		BaseRefName: detail.BaseRefName,
 		HeadRefName: detail.HeadRefName,
 		Body:        detail.Body,
 		Agents:      agents,
 		Diff:        diff,
-	})
+	}, nil
+}
+
+func (w ReviewWork) review(ctx context.Context) (store.Review, error) {
+	detail, input, err := prompt(ctx, w.GitHub, w.Repo, w.Number)
+	if err != nil {
+		return store.Review{}, err
+	}
+	result, truncated, err := review.Request(ctx, w.OpenRouter, w.Model, input)
 	if err != nil {
 		return store.Review{}, err
 	}

@@ -110,22 +110,27 @@ var schema = map[string]any{
 }
 
 func RequestBody(model, user string) ([]byte, error) {
+	return requestBody(model, System, "review", schema, user)
+}
+
+func requestBody(model, system, name string, schema map[string]any, user string) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"model": model,
 		"messages": []map[string]string{
-			{"role": "system", "content": System},
+			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
 		"response_format": map[string]any{
 			"type":        "json_schema",
-			"json_schema": map[string]any{"name": "review", "strict": true, "schema": schema},
+			"json_schema": map[string]any{"name": name, "strict": true, "schema": schema},
 		},
 		// Route only to providers that support the JSON schema.
 		"provider": map[string]any{"require_parameters": true},
 	})
 }
 
-func Parse(data []byte) (Review, error) {
+// content returns the message text of a chat completion, or the OpenRouter error in it.
+func content(data []byte, missing string) (string, error) {
 	var response struct {
 		Choices []struct {
 			Message struct {
@@ -137,16 +142,24 @@ func Parse(data []byte) (Review, error) {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(data, &response); err != nil {
-		return Review{}, err
+		return "", err
 	}
 	if response.Error != nil {
-		return Review{}, &openrouter.Error{Message: response.Error.Message}
+		return "", &openrouter.Error{Message: response.Error.Message}
 	}
 	if len(response.Choices) == 0 || response.Choices[0].Message.Content == nil {
-		return Review{}, &openrouter.Error{Message: "The model returned no review"}
+		return "", &openrouter.Error{Message: missing}
+	}
+	return *response.Choices[0].Message.Content, nil
+}
+
+func Parse(data []byte) (Review, error) {
+	text, err := content(data, "The model returned no review")
+	if err != nil {
+		return Review{}, err
 	}
 	var review Review
-	if err := json.Unmarshal([]byte(*response.Choices[0].Message.Content), &review); err != nil {
+	if err := json.Unmarshal([]byte(text), &review); err != nil {
 		return Review{}, err
 	}
 	if !slices.Contains([]string{"green", "yellow", "red"}, review.Risk) {

@@ -192,7 +192,11 @@ func (f *fakeOpenRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		content, _ := json.Marshal(`{"risk":"yellow","summary":"Looks fine.","findings":[{"severity":"low","file":"a.go","title":"t","detail":"d"}]}`)
+		reply := `{"risk":"yellow","summary":"Looks fine.","findings":[{"severity":"low","file":"a.go","title":"t","detail":"d"}]}`
+		if bytes.Contains(body, []byte(`"name":"classification"`)) {
+			reply = `{"score":4,"reason":"Medium risk."}`
+		}
+		content, _ := json.Marshal(reply)
 		fmt.Fprintf(w, `{"choices":[{"message":{"content":%s}}]}`, content)
 	default:
 		http.NotFound(w, r)

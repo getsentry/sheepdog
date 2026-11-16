@@ -122,6 +122,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}", s.authed(s.pullRequest))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/review", s.authed(s.getReview))
 	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/review", s.authed(s.startReview))
+	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.getClassification))
+	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.startClassification))
 	mux.HandleFunc("GET /api/tasks", s.authed(s.listTasks))
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.authed(s.cancelTask))
 	mux.HandleFunc("GET /api/events", s.authed(s.events))

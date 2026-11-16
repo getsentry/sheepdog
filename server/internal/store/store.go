@@ -50,6 +50,19 @@ CREATE TABLE IF NOT EXISTS reviews (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS reviews_by_pr ON reviews(user_id, repo, number, created_at);
+CREATE TABLE IF NOT EXISTS classifications (
+	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	repo TEXT NOT NULL,
+	number INTEGER NOT NULL,
+	head_sha TEXT NOT NULL,
+	model TEXT NOT NULL,
+	score INTEGER NOT NULL,
+	reason TEXT NOT NULL,
+	diff_truncated INTEGER NOT NULL,
+	pr_updated_at TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS classifications_by_pr ON classifications(user_id, repo, number, created_at);
 `
 
 type Store struct {
@@ -258,7 +271,7 @@ func (s *Store) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
-// Review is a finished AI review of one pull request.
+// Review is a finished review of one pull request.
 type Review struct {
 	Repo    string `json:"repo"`
 	Number  int    `json:"number"`
@@ -314,6 +327,57 @@ func (s *Store) LatestReview(ctx context.Context, userID int64, repo string, num
 	}
 	r.CreatedAt = time.UnixMilli(createdAt)
 	return r, nil
+}
+
+// Classification is a finished danger score of one pull request.
+type Classification struct {
+	Repo    string `json:"repo"`
+	Number  int    `json:"number"`
+	HeadSHA string `json:"headSha"`
+	Model   string `json:"model"`
+	review.Classification
+	DiffTruncated bool      `json:"diffTruncated"`
+	PRUpdatedAt   time.Time `json:"prUpdatedAt"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// AddClassification stores a classification and sets its CreatedAt.
+func (s *Store) AddClassification(ctx context.Context, userID int64, c *Classification) error {
+	createdAt := now()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO classifications (user_id, repo, number, head_sha, model, score, reason, diff_truncated, pr_updated_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userID, c.Repo, c.Number, c.HeadSHA, c.Model, c.Score, c.Reason, c.DiffTruncated,
+		c.PRUpdatedAt.UTC().Format(time.RFC3339), createdAt)
+	if err != nil {
+		return err
+	}
+	c.CreatedAt = time.UnixMilli(createdAt)
+	return nil
+}
+
+func (s *Store) LatestClassification(ctx context.Context, userID int64, repo string, number int) (Classification, error) {
+	var (
+		c           Classification
+		prUpdatedAt string
+		createdAt   int64
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT repo, number, head_sha, model, score, reason, diff_truncated, pr_updated_at, created_at
+		FROM classifications WHERE user_id = ? AND repo = ? AND number = ?
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, userID, repo, number,
+	).Scan(&c.Repo, &c.Number, &c.HeadSHA, &c.Model, &c.Score, &c.Reason, &c.DiffTruncated, &prUpdatedAt, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Classification{}, ErrNotFound
+	}
+	if err != nil {
+		return Classification{}, err
+	}
+	if c.PRUpdatedAt, err = time.Parse(time.RFC3339, prUpdatedAt); err != nil {
+		return Classification{}, err
+	}
+	c.CreatedAt = time.UnixMilli(createdAt)
+	return c, nil
 }
 
 func now() int64 {

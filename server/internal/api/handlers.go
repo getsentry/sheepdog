@@ -294,6 +294,50 @@ func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.
 	writeJSON(w, http.StatusAccepted, task)
 }
 
+func (s *Server) getClassification(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, number, ok := pullPath(w, r)
+	if !ok {
+		return
+	}
+	c, err := s.store.LatestClassification(r.Context(), user.ID, repo, number)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "This pull request has no classification")
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, number, ok := pullPath(w, r)
+	if !ok {
+		return
+	}
+	if user.OpenRouterKey == "" || user.Model == "" {
+		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
+		return
+	}
+	task, err := s.tasks.Start(user.ID, tasks.ClassifyWork{
+		Store:      s.store,
+		GitHub:     github.New(s.cfg.GitHubURL, user.GitHubToken),
+		OpenRouter: openrouter.New(s.cfg.OpenRouterURL, user.OpenRouterKey),
+		UserID:     user.ID,
+		Login:      user.Login,
+		Model:      user.Model,
+		Repo:       repo,
+		Number:     number,
+		Publish:    func(e tasks.ClassificationEvent) { s.hub.publish(user.ID, "classification", e) },
+	})
+	if errors.Is(err, tasks.ErrRunning) {
+		writeError(w, http.StatusConflict, "A classification of this pull request is already running")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, task)
+}
+
 func (s *Server) listTasks(w http.ResponseWriter, _ *http.Request, user store.User) {
 	writeJSON(w, http.StatusOK, s.tasks.List(user.ID))
 }

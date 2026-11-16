@@ -451,6 +451,45 @@ func TestReviewsByUserAndReopen(t *testing.T) {
 	}
 }
 
+func TestClassificationsByUserAndReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	key := newKey(t)
+	ctx := context.Background()
+	s := openStore(t, path, key)
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
+	repo := "getsentry/sentry-cocoa"
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	if _, err := s.LatestClassification(ctx, alice, repo, 7); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("classification before add: %v", err)
+	}
+	first := Classification{Repo: repo, Number: 7, HeadSHA: "old", Model: "m/one", Classification: review.Classification{Score: 9, Reason: "first"}}
+	second := Classification{Repo: repo, Number: 7, HeadSHA: "new", Model: "m/two", DiffTruncated: true, PRUpdatedAt: updated, Classification: review.Classification{Score: 2, Reason: "second"}}
+	for _, c := range []*Classification{&first, &second} {
+		if err := s.AddClassification(ctx, alice, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if second.CreatedAt.IsZero() {
+		t.Error("AddClassification did not set CreatedAt")
+	}
+	s.Close()
+
+	s = openStore(t, path, key)
+	got, err := s.LatestClassification(ctx, alice, repo, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HeadSHA != "new" || got.Model != "m/two" || got.Score != 2 || got.Reason != "second" || !got.DiffTruncated ||
+		!got.PRUpdatedAt.Equal(updated) || !got.CreatedAt.Equal(second.CreatedAt) {
+		t.Errorf("latest classification = %+v", got)
+	}
+	if _, err := s.LatestClassification(ctx, bob, repo, 7); !errors.Is(err, ErrNotFound) {
+		t.Errorf("bob sees the classification of alice: %v", err)
+	}
+}
+
 func TestPragmas(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	var mode string

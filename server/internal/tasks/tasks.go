@@ -14,7 +14,7 @@ var ErrRunning = errors.New("tasks: a task with this key is already running")
 // Work is one kind of background work. Run must return soon after ctx ends.
 type Work interface {
 	Kind() string
-	// Key names the subject of the work. A user can run only one task for each key.
+	// Key names the subject of the work. A user can run only one task of a kind for each key.
 	Key() string
 	Title() string
 	Subtitle() string
@@ -53,7 +53,7 @@ func NewManager(ctx context.Context, changed func(userID int64, tasks []Task)) *
 func (m *Manager) Start(userID int64, work Work) (Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if slices.ContainsFunc(m.tasks[userID], func(r *running) bool { return r.Key == work.Key() }) {
+	if slices.ContainsFunc(m.tasks[userID], func(r *running) bool { return r.Kind == work.Kind() && r.Key == work.Key() }) {
 		return Task{}, ErrRunning
 	}
 	ctx, cancel := context.WithCancel(m.ctx)

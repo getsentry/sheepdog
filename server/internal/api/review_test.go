@@ -65,7 +65,7 @@ func TestReviewIsStoredAndSurvivesRestart(t *testing.T) {
 
 	var task tasks.Task
 	h.json("POST", reviewPath, alice, nil, http.StatusAccepted, &task)
-	if task.ID == "" || task.Kind != "review" || task.Key != "getsentry/sentry-cocoa#7" || task.Title != "AI review of #7" || task.Subtitle != "getsentry/sentry-cocoa" {
+	if task.ID == "" || task.Kind != "review" || task.Key != "getsentry/sentry-cocoa#7" || task.Title != "Review of #7" || task.Subtitle != "getsentry/sentry-cocoa" {
 		t.Errorf("task %+v", task)
 	}
 	if events.expect("tasks", &list); len(list) != 1 || list[0] != task {
@@ -209,5 +209,62 @@ func TestRepositoryNamesIgnoreCase(t *testing.T) {
 	h.json("GET", "/api/repos/GetSentry/Sentry-Cocoa/pulls/7/review", alice, nil, http.StatusOK, &stored)
 	if stored.Repo != "getsentry/sentry-cocoa" {
 		t.Errorf("stored review repository %q", stored.Repo)
+	}
+}
+
+const classificationPath = "/api/repos/getsentry/sentry-cocoa/pulls/7/classification"
+
+func TestClassificationIsStoredAndSeparateFromReview(t *testing.T) {
+	h := newHarness(t, nil)
+	alice, bob := h.signIn(aliceToken), h.signIn(bobToken)
+	h.wantError("POST", classificationPath, alice, nil, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
+	h.settings(alice, map[string]string{"openRouterKey": aliceKey, "model": "alice/model"})
+	h.wantError("GET", classificationPath, alice, nil, http.StatusNotFound, "This pull request has no classification")
+	events := h.events(alice)
+	var list []tasks.Task
+	events.expect("tasks", &list)
+
+	var task tasks.Task
+	h.json("POST", classificationPath, alice, nil, http.StatusAccepted, &task)
+	if task.Kind != "classify" || task.Key != "getsentry/sentry-cocoa#7" || task.Title != "Classification of #7" {
+		t.Errorf("task %+v", task)
+	}
+	events.expect("tasks", &list)
+	var done tasks.ClassificationEvent
+	events.expect("classification", &done)
+	if done.Error != "" || done.Classification == nil || done.Classification.Score != 4 || done.Classification.Reason != "Medium risk." || done.Classification.HeadSHA != "sha-1" {
+		t.Fatalf("classification event %+v", done)
+	}
+	if sent := h.openrouter.lastBody(); !strings.Contains(sent, "agents of alice at main") || !strings.Contains(sent, `"name":"classification"`) {
+		t.Errorf("OpenRouter request %s", sent)
+	}
+
+	var stored store.Classification
+	h.json("GET", classificationPath, alice, nil, http.StatusOK, &stored)
+	if stored.Score != 4 || !stored.CreatedAt.Equal(done.Classification.CreatedAt) {
+		t.Errorf("stored classification %+v", stored)
+	}
+	h.wantError("GET", classificationPath, bob, nil, http.StatusNotFound, "This pull request has no classification")
+	h.wantError("GET", reviewPath, alice, nil, http.StatusNotFound, "This pull request has no review")
+}
+
+func TestClassificationAndReviewRunTogether(t *testing.T) {
+	h := newHarness(t, nil)
+	alice := h.signIn(aliceToken)
+	h.settings(alice, map[string]string{"openRouterKey": aliceKey, "model": "slow/model"})
+	h.json("POST", reviewPath, alice, nil, http.StatusAccepted, nil)
+	h.openrouter.waitStarted(t)
+	h.json("POST", classificationPath, alice, nil, http.StatusAccepted, nil)
+	h.openrouter.waitStarted(t)
+	h.wantError("POST", classificationPath, alice, nil, http.StatusConflict, "A classification of this pull request is already running")
+	h.wantError("POST", reviewPath, alice, nil, http.StatusConflict, "A review of this pull request is already running")
+	var list []tasks.Task
+	h.json("GET", "/api/tasks", alice, nil, http.StatusOK, &list)
+	for _, task := range list {
+		h.json("DELETE", "/api/tasks/"+task.ID, alice, nil, http.StatusNoContent, nil)
+		h.openrouter.waitCancelled(t)
+	}
+	if len(list) != 2 {
+		t.Errorf("tasks %+v, want a review and a classification", list)
 	}
 }
