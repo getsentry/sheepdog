@@ -81,6 +81,17 @@ func TestSSOHeaderAsksForAuthorization(t *testing.T) {
 	}
 }
 
+func TestPartialSSOResultsAreNotAnError(t *testing.T) {
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-GitHub-SSO", "partial-results; organizations=21955855")
+		io.WriteString(w, "diff --git a/x b/x")
+	})
+	diff, err := client.Diff(context.Background(), "acme/app", 1)
+	if err != nil || diff != "diff --git a/x b/x" {
+		t.Fatalf("got %q, %v", diff, err)
+	}
+}
+
 func TestOtherErrorsCarryGitHubMessage(t *testing.T) {
 	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

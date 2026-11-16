@@ -70,7 +70,8 @@ func (c *Client) send(req *http.Request) (*http.Response, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if sso := resp.Header.Get("X-GitHub-SSO"); sso != "" {
+	// "partial-results" comes with a successful response that leaves out other SSO organizations, so it is not an error.
+	if sso := resp.Header.Get("X-GitHub-SSO"); strings.HasPrefix(strings.TrimSpace(sso), "required") {
 		return resp, body, &Error{Status: resp.StatusCode, Message: ssoMessage(sso)}
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -89,7 +90,7 @@ func (c *Client) send(req *http.Request) (*http.Response, []byte, error) {
 	return resp, body, nil
 }
 
-// The header is "required; url=<authorization URL>" or "partial-results; organizations=<ids>".
+// The header is "required; url=<authorization URL>".
 func ssoMessage(header string) string {
 	link := "https://github.com/settings/tokens"
 	for part := range strings.SplitSeq(header, ";") {
