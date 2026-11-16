@@ -35,6 +35,7 @@ type Server struct {
 
 	mu        sync.Mutex
 	polls     map[int64]*pollRun
+	restarts  map[int64]uint64
 	requests  map[int64]Requests
 	repoCache map[int64]cachedRepos
 }
@@ -61,6 +62,7 @@ func New(ctx context.Context, cfg config.Config, db *store.Store) *Server {
 		sessionCleanup: time.Hour,
 		signIns:        newLimiter(10, time.Minute),
 		polls:          map[int64]*pollRun{},
+		restarts:       map[int64]uint64{},
 		requests:       map[int64]Requests{},
 		repoCache:      map[int64]cachedRepos{},
 	}
@@ -197,6 +199,9 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func internalError(w http.ResponseWriter, err error) {
+	if cancelled(w, err) {
+		return
+	}
 	log.Printf("internal error: %v", err)
 	writeError(w, http.StatusInternalServerError, "Internal server error")
 }
@@ -211,10 +216,19 @@ func githubError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, rejectedAgain)
 		return
 	}
-	if errors.Is(err, context.Canceled) {
+	if cancelled(w, err) {
 		return
 	}
 	writeError(w, http.StatusBadGateway, err.Error())
+}
+
+// cancelled writes 503 for an error that comes from an ended request context, for example on shutdown.
+func cancelled(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, context.Canceled) {
+		return false
+	}
+	writeError(w, http.StatusServiceUnavailable, "The server is shutting down")
+	return true
 }
 
 // limiter counts failures for each key in a fixed window.

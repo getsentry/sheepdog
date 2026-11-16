@@ -20,6 +20,8 @@ func (e *Error) Error() string { return e.Message }
 
 var ErrInvalidKey = &Error{Message: "Invalid API key"}
 
+const maxBodyBytes = 10 << 20
+
 type Client struct {
 	baseURL string
 	key     string
@@ -65,9 +67,12 @@ func (c *Client) send(ctx context.Context, method, path string, body []byte) ([]
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > maxBodyBytes {
+		return nil, &Error{Message: fmt.Sprintf("The OpenRouter response is larger than %d MB", maxBodyBytes>>20)}
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, ErrInvalidKey

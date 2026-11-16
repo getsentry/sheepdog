@@ -143,6 +143,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 			*field = strings.TrimSpace(*field)
 		}
 	}
+	if body.Repo != nil {
+		*body.Repo = strings.ToLower(*body.Repo)
+	}
 	if body.Repo != nil && *body.Repo != "" {
 		if err := github.ValidRepo(*body.Repo); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -204,6 +207,9 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request, user store.User)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if cancelled(w, err) {
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -216,8 +222,9 @@ func (s *Server) reviewRequests(w http.ResponseWriter, _ *http.Request, user sto
 }
 
 // pullPath reads the repository and the PR number from the path, or writes a 400 error.
+// GitHub names ignore case, so the repository is in lower case for stored reviews and task keys.
 func pullPath(w http.ResponseWriter, r *http.Request) (string, int, bool) {
-	repo := r.PathValue("owner") + "/" + r.PathValue("name")
+	repo := strings.ToLower(r.PathValue("owner") + "/" + r.PathValue("name"))
 	if err := github.ValidRepo(repo); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return "", 0, false

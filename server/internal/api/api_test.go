@@ -50,8 +50,12 @@ var identities = map[string]identity{
 	daveToken:   {"dave", "repo", 505},
 }
 
+// stalledPull is a PR number whose detail request waits until the request ends.
+const stalledPull = 999
+
 // fakeGitHub answers each token with the data of its own user.
 type fakeGitHub struct {
+	stalled   chan struct{}
 	mu        sync.Mutex
 	polls     map[string]int
 	repoLists map[string]int
@@ -125,6 +129,12 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.repoLists[token]++
 		f.mu.Unlock()
 		fmt.Fprintf(w, `{"data":{"viewer":{"repositories":{"nodes":[{"nameWithOwner":"%s/one"}],"pageInfo":{"hasNextPage":false}}}}}`, id.login)
+	case strings.Contains(req.Query, "pullRequest(number") && req.Variables["number"] == float64(stalledPull):
+		f.stalled <- struct{}{}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
 	case strings.Contains(req.Query, "pullRequest(number"):
 		fmt.Fprintf(w, `{"data":{"repository":{"pullRequest":{"title":"%s/%s#%v","body":"","headRefName":"h","baseRefName":"main","headRefOid":"sha-1",
 			"changedFiles":1,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","reviewDecision":null,
@@ -191,6 +201,8 @@ type harness struct {
 	github     *fakeGitHub
 	openrouter *fakeOpenRouter
 	close      func()
+	// shutdown ends the server context, as a signal does, and keeps the connections open.
+	shutdown func()
 }
 
 // newHarness runs the API with fake GitHub and OpenRouter servers. setup can add rows and change the server before it starts.
@@ -203,7 +215,7 @@ const defaultAllowed = "Alice, bob,carol"
 // newHarnessAt runs the API on the database at dbPath. close stops it, also before the test ends.
 func newHarnessAt(t *testing.T, dbPath, allowed string, setup func(*Server)) *harness {
 	t.Helper()
-	gh := &fakeGitHub{polls: map[string]int{}, repoLists: map[string]int{}, revoked: map[string]bool{}}
+	gh := &fakeGitHub{stalled: make(chan struct{}, 1), polls: map[string]int{}, repoLists: map[string]int{}, revoked: map[string]bool{}}
 	ghServer := httptest.NewServer(gh)
 	openRouter := &fakeOpenRouter{started: make(chan struct{}, 4), cancelled: make(chan struct{}, 4)}
 	orServer := httptest.NewServer(openRouter)
@@ -250,7 +262,7 @@ func newHarnessAt(t *testing.T, dbPath, allowed string, setup func(*Server)) *ha
 		orServer.Close()
 	})
 	t.Cleanup(closeOnce)
-	return &harness{t: t, url: api.URL, dbPath: dbPath, server: s, github: gh, openrouter: openRouter, close: closeOnce}
+	return &harness{t: t, url: api.URL, dbPath: dbPath, server: s, github: gh, openrouter: openRouter, close: closeOnce, shutdown: cancel}
 }
 
 // do sends a request and fails the test when the response contains a GitHub token or an OpenRouter key.
@@ -693,4 +705,51 @@ func TestEventsSendKeepAlive(t *testing.T) {
 	if name, line := events.next(); name != "comment" || line != ": keep-alive" {
 		t.Errorf("got %q %q, want a keep-alive comment", name, line)
 	}
+}
+
+func TestStreamWithFullQueueEndsAndKeepsReviews(t *testing.T) {
+	h := newHub()
+	sub, unsubscribe, _ := h.subscribe(1, "session")
+	defer unsubscribe()
+	for i := range 3 * maxQueued {
+		h.publish(1, "requests", i)
+		h.publish(1, "tasks", -i)
+	}
+	if queue := h.take(sub); len(queue) != 2 || queue[0].name != "requests" || string(queue[0].data) != fmt.Sprint(3*maxQueued-1) ||
+		queue[1].name != "tasks" || string(queue[1].data) != fmt.Sprint(1-3*maxQueued) {
+		t.Fatalf("queue of state events %+v, want only the newest requests and tasks", queue)
+	}
+
+	h.publish(1, "tasks", "running")
+	for i := range maxQueued - 1 {
+		h.publish(1, "review", i)
+	}
+	select {
+	case <-sub.done:
+		t.Fatal("the stream ended before its queue was full")
+	default:
+	}
+	h.publish(1, "review", "one more")
+	select {
+	case <-sub.done:
+	default:
+		t.Fatal("a review event was dropped and the stream stays open")
+	}
+	if n := h.count(1); n != 0 {
+		t.Errorf("%d streams left after the end", n)
+	}
+	h.publish(1, "review", "after the end")
+	if queue := h.take(sub); len(queue) != maxQueued {
+		t.Errorf("queue has %d events, want the %d events before the end", len(queue), maxQueued)
+	}
+}
+
+func TestShutdownAnswersRunningRequests(t *testing.T) {
+	h := newHarness(t, nil)
+	alice := h.signIn(aliceToken)
+	go func() {
+		<-h.github.stalled
+		h.shutdown()
+	}()
+	h.wantError("GET", fmt.Sprintf("/api/repos/getsentry/sentry-cocoa/pulls/%d", stalledPull), alice, nil, http.StatusServiceUnavailable, "The server is shutting down")
 }

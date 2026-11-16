@@ -40,19 +40,63 @@ func TestSealerRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, second := s.seal(githubToken), s.seal(githubToken)
+	first, second := s.seal(githubToken, 1, githubTokenColumn), s.seal(githubToken, 1, githubTokenColumn)
 	if bytes.Equal(first, second) {
 		t.Error("two seals of the same text are equal; the nonce is not random")
 	}
 	if bytes.Contains(first, []byte(githubToken)) {
 		t.Error("sealed bytes contain the plaintext")
 	}
-	got, err := s.open(first)
+	got, err := s.open(first, 1, githubTokenColumn)
 	if err != nil || got != githubToken {
 		t.Fatalf("open = %q, %v", got, err)
 	}
-	if _, err := s.open(first[:5]); err == nil {
+	if _, err := s.open(first[:5], 1, githubTokenColumn); err == nil {
 		t.Error("open of a short ciphertext succeeded")
+	}
+	if _, err := s.open(first, 2, githubTokenColumn); err == nil {
+		t.Error("open with another user ID succeeded")
+	}
+	if _, err := s.open(first, 1, openRouterKeyColumn); err == nil {
+		t.Error("open with another column succeeded")
+	}
+}
+
+func TestSecretCopiedToAnotherRowDoesNotDecrypt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	s := openStore(t, path, newKey(t))
+	ctx := context.Background()
+	alice, err := s.UpsertUser(ctx, "alice", githubToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.UpsertUser(ctx, "bob", "ghp_bobToken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.UpsertUser(ctx, "Alice", githubToken+"2"); err != nil || again != alice {
+		t.Fatalf("second sign-in of alice = %d, %v", again, err)
+	}
+	if u, err := s.User(ctx, alice); err != nil || u.GitHubToken != githubToken+"2" || u.Login != "alice" {
+		t.Fatalf("alice = %+v, %v", u, err)
+	}
+
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`UPDATE users SET github_token_enc = (SELECT github_token_enc FROM users WHERE id = ?) WHERE id = ?`, alice, bob); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.User(ctx, bob); err == nil {
+		t.Error("the GitHub token of alice decrypted in the row of bob")
+	}
+	if _, err := raw.Exec(`UPDATE users SET openrouter_key_enc = github_token_enc WHERE id = ?`, alice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.User(ctx, alice); err == nil {
+		t.Error("the GitHub token decrypted as the OpenRouter key")
 	}
 }
 

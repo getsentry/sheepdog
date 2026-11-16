@@ -46,7 +46,7 @@ If a required variable is missing or wrong, the server stops at once with a mess
 
 ## Build and run
 
-You need Go. Run all commands in this directory.
+You need Go 1.27 or later. Run all commands in this directory.
 
 ```sh
 go vet ./... && go test ./...
@@ -60,7 +60,7 @@ The server has no C dependencies. To build for a Linux server on a Mac:
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/reviewqueue
 ```
 
-The server stops on SIGINT or SIGTERM. It cancels the running AI reviews. Finished reviews stay in the database.
+The server stops on SIGINT or SIGTERM. It cancels the running AI reviews. Finished reviews stay in the database. A request that waits for GitHub or OpenRouter at that time gets status 503 with the text `The server is shutting down`.
 
 ## TLS
 
@@ -85,6 +85,10 @@ After 10 failed sign-ins in a minute from one client IP address, the server reje
 
 All requests and responses use JSON. An error response has the form `{"error": "text"}`. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>`. A missing, unknown, or ended session gets status 401. A login that is no longer in `REVIEWQ_ALLOWED_LOGINS` gets status 403.
 
+GitHub repository names ignore case. The server changes them to lower case, so settings, review requests, tasks, review events, and stored reviews always use lower case names.
+
+An AI review sends at most 200,000 characters of the diff. The server counts Unicode code points, not bytes and not visible characters. GitHub responses can have at most 50 MB for a diff and 10 MB for other data, and OpenRouter responses at most 10 MB. A larger response gives an error.
+
 | Route | Purpose |
 | --- | --- |
 | `POST /api/session` | Sign in with `{"githubToken"}`. Returns `{"sessionToken", "login"}`. |
@@ -101,3 +105,5 @@ All requests and responses use JSON. An error response has the form `{"error": "
 | `GET /api/tasks` | The running tasks of the user. |
 | `DELETE /api/tasks/{id}` | Stop a task. |
 | `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, and `review`. A user can open at most 8 streams at a time. One more stream gets status 429. |
+
+A `requests` or `tasks` event has the full current state. A `review` event is sent once when a review is stored or fails, also when the task was stopped after the review was stored. The server never skips a `review` event. If a client reads its stream too slowly, the server ends that stream instead, and the client must connect again. A new stream starts with the current `requests` and `tasks` events, and the client must load the stored reviews again with `GET .../review`.

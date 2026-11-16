@@ -10,6 +10,7 @@ import (
 	"reviewqueue/internal/openrouter"
 )
 
+// MaxDiffCharacters counts Unicode code points (runes). The Swift app counted grapheme clusters, so a diff with combined characters is cut a little earlier.
 const MaxDiffCharacters = 200_000
 
 const System = `You review GitHub pull requests for a human reviewer. Your review is shown only to that reviewer and is never published.

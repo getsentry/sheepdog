@@ -11,7 +11,7 @@ import (
 	"reviewqueue/internal/store"
 )
 
-// ReviewEvent reports the end of a review. It has a review or an error. A cancelled review sends no event.
+// ReviewEvent reports the end of a review. It has a review or an error. A review that is cancelled before it is stored sends no event.
 type ReviewEvent struct {
 	Repo   string        `json:"repo"`
 	Number int           `json:"number"`
@@ -43,7 +43,12 @@ func (w ReviewWork) Subtitle() string { return w.Repo }
 
 func (w ReviewWork) Run(ctx context.Context) {
 	result, err := w.review(ctx)
-	if ctx.Err() != nil {
+	w.report(ctx, result, err)
+}
+
+// report publishes a stored review also after a cancel, because the review is in the database.
+func (w ReviewWork) report(ctx context.Context, result store.Review, err error) {
+	if err != nil && ctx.Err() != nil {
 		log.Printf("review %s for %s cancelled", w.Key(), w.Login)
 		return
 	}

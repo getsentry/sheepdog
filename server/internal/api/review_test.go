@@ -175,3 +175,39 @@ func TestReviewNeedsKeyAndModel(t *testing.T) {
 	h.wantError("POST", "/api/repos/getsentry/sentry-cocoa/pulls/0/review", alice, nil, http.StatusBadRequest, "The pull request number is not valid")
 	h.wantError("GET", "/api/repos/get%20sentry/x/pulls/1/review", alice, nil, http.StatusBadRequest, `invalid repository name "get sentry/x"`)
 }
+
+func TestRepositoryNamesIgnoreCase(t *testing.T) {
+	h := newHarness(t, nil)
+	alice := h.signIn(aliceToken)
+	var settings settingsResponse
+	h.json("PUT", "/api/settings", alice, map[string]string{"repo": "GetSentry/Alice-Repo", "openRouterKey": aliceKey, "model": "slow/model"}, http.StatusOK, &settings)
+	if settings.Repo != aliceRepo {
+		t.Errorf("stored repository %q, want %q", settings.Repo, aliceRepo)
+	}
+	if got := h.waitRequests(alice, func(r Requests) bool { return r.FetchedAt != nil }); got.Repo != aliceRepo || !slices.Equal(numbers(got), []int{101}) {
+		t.Errorf("requests %+v", got)
+	}
+
+	var task tasks.Task
+	h.json("POST", "/api/repos/GetSentry/Sentry-Cocoa/pulls/7/review", alice, nil, http.StatusAccepted, &task)
+	if task.Key != "getsentry/sentry-cocoa#7" || task.Subtitle != "getsentry/sentry-cocoa" {
+		t.Errorf("task %+v", task)
+	}
+	h.openrouter.waitStarted(t)
+	h.wantError("POST", reviewPath, alice, nil, http.StatusConflict, "A review of this pull request is already running")
+	h.wantError("POST", "/api/repos/GETSENTRY/SENTRY-COCOA/pulls/7/review", alice, nil, http.StatusConflict, "A review of this pull request is already running")
+	h.json("DELETE", "/api/tasks/"+task.ID, alice, nil, http.StatusNoContent, nil)
+	h.openrouter.waitCancelled(t)
+
+	h.settings(alice, map[string]string{"model": "alice/model"})
+	h.json("POST", "/api/repos/getSentry/sentry-Cocoa/pulls/7/review", alice, nil, http.StatusAccepted, nil)
+	waitFor(t, "the review is stored", func() bool {
+		status, _ := h.do("GET", reviewPath, alice, nil)
+		return status == http.StatusOK
+	})
+	var stored store.Review
+	h.json("GET", "/api/repos/GetSentry/Sentry-Cocoa/pulls/7/review", alice, nil, http.StatusOK, &stored)
+	if stored.Repo != "getsentry/sentry-cocoa" {
+		t.Errorf("stored review repository %q", stored.Repo)
+	}
+}

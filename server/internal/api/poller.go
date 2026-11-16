@@ -35,11 +35,18 @@ func (s *Server) requestsFor(user store.User) Requests {
 // restartPoll stops the poller of the user and starts a new one with the stored token and repository.
 func (s *Server) restartPoll(userID int64) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	// The user is read under the lock, so that the last of two parallel restarts uses the newest settings.
+	s.restarts[userID]++
+	restart := s.restarts[userID]
+	s.mu.Unlock()
 	user, err := s.store.User(s.ctx, userID)
 	if err != nil {
 		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// A later restart reads the user after the settings change that started this one, so its settings are at least as new.
+	if s.restarts[userID] != restart {
+		return nil
 	}
 	if run := s.polls[userID]; run != nil {
 		run.cancel()

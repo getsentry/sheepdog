@@ -93,16 +93,34 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+const (
+	githubTokenColumn   = "github_token_enc"
+	openRouterKeyColumn = "openrouter_key_enc"
+)
+
 // UpsertUser creates the user or replaces the GitHub token of an existing user, and returns the user ID.
 func (s *Store) UpsertUser(ctx context.Context, login, githubToken string) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	// The sealed token needs the user ID, so a new user gets an empty token first.
 	var id int64
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO users (login, github_token_enc, created_at) VALUES (?, ?, ?)
-		ON CONFLICT (login) DO UPDATE SET github_token_enc = excluded.github_token_enc
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO users (login, github_token_enc, created_at) VALUES (?, x'', ?)
+		ON CONFLICT (login) DO UPDATE SET github_token_enc = github_token_enc
 		RETURNING id`,
-		login, s.sealer.seal(githubToken), now(),
+		login, now(),
 	).Scan(&id)
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	sealed := s.sealer.seal(githubToken, id, githubTokenColumn)
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET github_token_enc = ? WHERE id = ?`, sealed, id); err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
 func (s *Store) User(ctx context.Context, id int64) (User, error) {
@@ -121,11 +139,11 @@ func (s *Store) User(ctx context.Context, id int64) (User, error) {
 	if err != nil {
 		return User{}, err
 	}
-	if u.GitHubToken, err = s.sealer.open(githubEnc); err != nil {
+	if u.GitHubToken, err = s.sealer.open(githubEnc, u.ID, githubTokenColumn); err != nil {
 		return User{}, err
 	}
 	if openRouterEnc != nil {
-		if u.OpenRouterKey, err = s.sealer.open(openRouterEnc); err != nil {
+		if u.OpenRouterKey, err = s.sealer.open(openRouterEnc, u.ID, openRouterKeyColumn); err != nil {
 			return User{}, err
 		}
 	}
@@ -152,7 +170,7 @@ func (s *Store) UpdateSettings(ctx context.Context, userID int64, settings Setti
 	if settings.OpenRouterKey != nil {
 		var sealed []byte
 		if *settings.OpenRouterKey != "" {
-			sealed = s.sealer.seal(*settings.OpenRouterKey)
+			sealed = s.sealer.seal(*settings.OpenRouterKey, userID, openRouterKeyColumn)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET openrouter_key_enc = ? WHERE id = ?`, sealed, userID); err != nil {
 			return err

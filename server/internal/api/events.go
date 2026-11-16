@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,7 +18,10 @@ type event struct {
 	data []byte
 }
 
-const maxStreams = 8
+const (
+	maxStreams = 8
+	maxQueued  = 16
+)
 
 // hub sends events to the open streams of one user.
 type hub struct {
@@ -27,8 +31,10 @@ type hub struct {
 
 type subscriber struct {
 	session string
-	events  chan event
-	done    chan struct{}
+	// queue is guarded by the hub lock. wake tells the stream that the queue has events.
+	queue []event
+	wake  chan struct{}
+	done  chan struct{}
 }
 
 func newHub() *hub {
@@ -42,7 +48,7 @@ func (h *hub) subscribe(userID int64, session string) (*subscriber, func(), bool
 	if len(h.streams[userID]) >= maxStreams {
 		return nil, nil, false
 	}
-	sub := &subscriber{session: session, events: make(chan event, 16), done: make(chan struct{})}
+	sub := &subscriber{session: session, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	if h.streams[userID] == nil {
 		h.streams[userID] = map[*subscriber]struct{}{}
 	}
@@ -60,10 +66,14 @@ func (h *hub) close(userID int64, session string) {
 	defer h.mu.Unlock()
 	for sub := range h.streams[userID] {
 		if session == "" || sub.session == session {
-			h.remove(userID, sub)
-			close(sub.done)
+			h.end(userID, sub)
 		}
 	}
+}
+
+func (h *hub) end(userID int64, sub *subscriber) {
+	h.remove(userID, sub)
+	close(sub.done)
 }
 
 func (h *hub) remove(userID int64, sub *subscriber) {
@@ -73,21 +83,40 @@ func (h *hub) remove(userID int64, sub *subscriber) {
 	}
 }
 
-// publish drops the event for a stream that does not read. Every event holds the full state, so the next one repairs it.
+// publish queues the event on every stream of the user. A requests or tasks event holds the full state, so it replaces the queued event of the same name.
+// A stream with a full queue is ended, so that its client connects again and loads the current state.
 func (h *hub) publish(userID int64, name string, v any) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("encode %s event: %v", name, err)
 		return
 	}
+	state := name == "requests" || name == "tasks"
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for sub := range h.streams[userID] {
+		if state {
+			sub.queue = slices.DeleteFunc(sub.queue, func(e event) bool { return e.name == name })
+		}
+		if len(sub.queue) >= maxQueued {
+			log.Printf("end a slow event stream of user %d", userID)
+			h.end(userID, sub)
+			continue
+		}
+		sub.queue = append(sub.queue, event{name: name, data: data})
 		select {
-		case sub.events <- event{name: name, data: data}:
+		case sub.wake <- struct{}{}:
 		default:
 		}
 	}
+}
+
+func (h *hub) take(sub *subscriber) []event {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	queue := sub.queue
+	sub.queue = nil
+	return queue
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -130,8 +159,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, user store.User)
 			return
 		case <-sub.done:
 			return
-		case e := <-sub.events:
-			write = func() { writeEvent(w, e) }
+		case <-sub.wake:
+			queue := s.hub.take(sub)
+			write = func() {
+				for _, e := range queue {
+					writeEvent(w, e)
+				}
+			}
 		case <-keepAlive.C:
 			write = func() { io.WriteString(w, ": keep-alive\n\n") }
 		}

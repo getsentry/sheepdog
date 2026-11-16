@@ -17,6 +17,11 @@ import (
 
 var ErrUnauthorized = errors.New("GitHub rejected the token")
 
+const (
+	maxDiffBytes = 50 << 20
+	maxBodyBytes = 10 << 20
+)
+
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 type Error struct {
@@ -49,16 +54,17 @@ func ValidRepo(repo string) error {
 	return nil
 }
 
-func (c *Client) get(ctx context.Context, path, accept string) (*http.Response, []byte, error) {
+func (c *Client) get(ctx context.Context, path, accept string, limit int64) (*http.Response, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	req.Header.Set("Accept", accept)
-	return c.send(req)
+	return c.send(req, limit)
 }
 
-func (c *Client) send(req *http.Request) (*http.Response, []byte, error) {
+// send reads at most limit bytes of the response body.
+func (c *Client) send(req *http.Request, limit int64) (*http.Response, []byte, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := c.http.Do(req)
@@ -66,9 +72,12 @@ func (c *Client) send(req *http.Request) (*http.Response, []byte, error) {
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, nil, fmt.Errorf("The GitHub response is larger than %d MB", limit>>20)
 	}
 	// "partial-results" comes with a successful response that leaves out other SSO organizations, so it is not an error.
 	if sso := resp.Header.Get("X-GitHub-SSO"); strings.HasPrefix(strings.TrimSpace(sso), "required") {
@@ -111,7 +120,7 @@ func (c *Client) graphql(ctx context.Context, query string, variables map[string
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	_, body, err := c.send(req)
+	_, body, err := c.send(req, maxBodyBytes)
 	if err != nil {
 		return err
 	}
@@ -140,7 +149,7 @@ type Viewer struct {
 }
 
 func (c *Client) Viewer(ctx context.Context) (Viewer, error) {
-	resp, body, err := c.get(ctx, "/user", "application/vnd.github+json")
+	resp, body, err := c.get(ctx, "/user", "application/vnd.github+json", maxBodyBytes)
 	if err != nil {
 		return Viewer{}, err
 	}
@@ -273,7 +282,7 @@ func (c *Client) Diff(ctx context.Context, repo string, number int) (string, err
 	if err := ValidRepo(repo); err != nil {
 		return "", err
 	}
-	_, body, err := c.get(ctx, fmt.Sprintf("/repos/%s/pulls/%d", repo, number), "application/vnd.github.diff")
+	_, body, err := c.get(ctx, fmt.Sprintf("/repos/%s/pulls/%d", repo, number), "application/vnd.github.diff", maxDiffBytes)
 	if err != nil {
 		return "", err
 	}
@@ -285,7 +294,7 @@ func (c *Client) AgentsFile(ctx context.Context, repo, ref string) (*string, err
 	if err := ValidRepo(repo); err != nil {
 		return nil, err
 	}
-	_, body, err := c.get(ctx, "/repos/"+repo+"/contents/AGENTS.md?ref="+url.QueryEscape(ref), "application/vnd.github.raw")
+	_, body, err := c.get(ctx, "/repos/"+repo+"/contents/AGENTS.md?ref="+url.QueryEscape(ref), "application/vnd.github.raw", maxBodyBytes)
 	if e, ok := errors.AsType[*Error](err); ok && e.Status == http.StatusNotFound {
 		return nil, nil
 	}

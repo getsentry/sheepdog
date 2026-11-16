@@ -1,6 +1,7 @@
 package openrouter
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -112,5 +113,15 @@ func TestCancelStopsCompletion(t *testing.T) {
 	_, err := New(url, "k").ChatCompletion(ctx, []byte(`{}`))
 	if !errors.Is(err, context.Canceled) || time.Since(begin) > 5*time.Second {
 		t.Fatalf("got %v after %v", err, time.Since(begin))
+	}
+}
+
+func TestResponseSizeIsLimited(t *testing.T) {
+	url := fakeOpenRouter(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bytes.Repeat([]byte(" "), maxBodyBytes+1))
+	})
+	_, err := New(url, "k").ChatCompletion(context.Background(), []byte(`{}`))
+	if err == nil || err.Error() != "The OpenRouter response is larger than 10 MB" {
+		t.Fatalf("got %v", err)
 	}
 }

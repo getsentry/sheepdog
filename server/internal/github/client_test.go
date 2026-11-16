@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -299,5 +301,28 @@ func TestCancelledContextStopsRequest(t *testing.T) {
 	cancel()
 	if _, err := client.Diff(ctx, "acme/app", 1); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestResponseSizeIsLimited(t *testing.T) {
+	var size atomic.Int64
+	size.Store(maxDiffBytes)
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bytes.Repeat([]byte("+"), int(size.Load())))
+	})
+	diff, err := client.Diff(context.Background(), "acme/app", 7)
+	if err != nil || len(diff) != maxDiffBytes {
+		t.Fatalf("diff at the limit: %d bytes, %v", len(diff), err)
+	}
+	size.Store(maxDiffBytes + 1)
+	if _, err := client.Diff(context.Background(), "acme/app", 7); err == nil || err.Error() != "The GitHub response is larger than 50 MB" {
+		t.Errorf("larger diff: %v", err)
+	}
+	size.Store(maxBodyBytes + 1)
+	if _, err := client.AgentsFile(context.Background(), "acme/app", "main"); err == nil || err.Error() != "The GitHub response is larger than 10 MB" {
+		t.Errorf("larger AGENTS.md: %v", err)
+	}
+	if _, err := client.Repositories(context.Background()); err == nil || err.Error() != "The GitHub response is larger than 10 MB" {
+		t.Errorf("larger GraphQL response: %v", err)
 	}
 }
