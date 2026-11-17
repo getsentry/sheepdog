@@ -1,0 +1,29 @@
+# Rules for the Sheepdog auto-reviewer. The server reads this file from the base branch of each pull request.
+# A pull request goes to the first lane whose conditions all match. Every other pull request needs a manual review.
+# max_score is the highest classification score (1 to 10) that the lane accepts. The model can only move a pull request to a stricter lane.
+version: 1
+
+lanes:
+  safe:
+    authors: ["dependabot[bot]"]
+    paths: ["package.json", "package-lock.json"]
+    max_changed_lines: 50
+    max_score: 2
+    no_major_bumps: true
+    require_checks: true
+    action: approve-and-automerge
+
+  docs:
+    paths: ["docs/**", "README.md", "CHANGELOG.md"]
+    max_changed_lines: 100
+    max_score: 2
+    require_checks: true
+    action: approve-and-automerge
+
+  quick_look:
+    max_changed_lines: 300
+    max_score: 4
+    action: suggest
+
+never_automatic:
+  paths: [".github/**", "src/sentry.ts", "app.json", "metro.config.js"]
