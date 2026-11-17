@@ -343,7 +343,12 @@ func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, use
 		Model:      user.Model,
 		Repo:       repo,
 		Number:     number,
-		Publish:    func(e tasks.ClassificationEvent) { s.hub.publish(user.ID, "classification", e) },
+		Publish: func(e tasks.ClassificationEvent) {
+			s.hub.publish(user.ID, "classification", e)
+			if e.Classification != nil {
+				s.pollNow(user.ID)
+			}
+		},
 	})
 	if errors.Is(err, tasks.ErrRunning) {
 		writeError(w, http.StatusConflict, "A classification of this pull request is already running")

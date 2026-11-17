@@ -87,16 +87,40 @@ func (c *Client) send(req *http.Request, limit int64) (*http.Response, []byte, e
 		return resp, body, ErrUnauthorized
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		var failure struct {
-			Message string `json:"message"`
-		}
-		json.Unmarshal(body, &failure)
-		if failure.Message == "" {
-			failure.Message = http.StatusText(resp.StatusCode)
-		}
-		return resp, body, &Error{Status: resp.StatusCode, Message: fmt.Sprintf("GitHub: %s (HTTP %d)", failure.Message, resp.StatusCode)}
+		return resp, body, &Error{Status: resp.StatusCode, Message: fmt.Sprintf("GitHub: %s (HTTP %d)", failureMessage(body, resp.StatusCode), resp.StatusCode)}
 	}
 	return resp, body, nil
+}
+
+// failureMessage adds the details of the errors list, because a message like "Unprocessable Entity" alone does not name the problem.
+// GitHub sends each detail as a text or as an object with a message.
+func failureMessage(body []byte, status int) string {
+	var failure struct {
+		Message string            `json:"message"`
+		Errors  []json.RawMessage `json:"errors"`
+	}
+	json.Unmarshal(body, &failure)
+	message := failure.Message
+	if message == "" {
+		message = http.StatusText(status)
+	}
+	var details []string
+	for _, raw := range failure.Errors {
+		var text string
+		var detail struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(raw, &text) != nil && json.Unmarshal(raw, &detail) == nil {
+			text = detail.Message
+		}
+		if text != "" {
+			details = append(details, text)
+		}
+	}
+	if len(details) > 0 {
+		message += ": " + strings.Join(details, "; ")
+	}
+	return message
 }
 
 // The header is "required; url=<authorization URL>".
@@ -219,8 +243,7 @@ query($q: String!, $owner: String!, $login: String!) {
   search(query: $q, type: ISSUE, first: 100) {
     nodes {
       ... on PullRequest {
-        number title url isDraft updatedAt additions deletions
-        author { login }
+        ...rowFields
         reviewRequests(first: 50) {
           nodes { requestedReviewer {
             __typename
@@ -236,7 +259,7 @@ query($q: String!, $owner: String!, $login: String!) {
       teams(first: 100, userLogins: [$login]) { nodes { combinedSlug } }
     }
   }
-}`
+}` + rowFields
 
 func (c *Client) ReviewRequests(ctx context.Context, repo, login string) ([]Row, error) {
 	if err := ValidRepo(repo); err != nil {
@@ -296,10 +319,21 @@ func (c *Client) Diff(ctx context.Context, repo string, number int) (string, err
 
 // Read from the base branch, so that a PR cannot change the review instructions. Nil means no file.
 func (c *Client) AgentsFile(ctx context.Context, repo, ref string) (*string, error) {
+	return c.file(ctx, repo, "AGENTS.md", ref)
+}
+
+// RulesFile reads .github/sheepdog.yml. Read it from the base branch, so that a PR cannot change its own lane. Nil means no file.
+func (c *Client) RulesFile(ctx context.Context, repo, ref string) (*string, error) {
+	return c.file(ctx, repo, RulesPath, ref)
+}
+
+const RulesPath = ".github/sheepdog.yml"
+
+func (c *Client) file(ctx context.Context, repo, path, ref string) (*string, error) {
 	if err := ValidRepo(repo); err != nil {
 		return nil, err
 	}
-	_, body, err := c.get(ctx, "/repos/"+repo+"/contents/AGENTS.md?ref="+url.QueryEscape(ref), "application/vnd.github.raw", maxBodyBytes)
+	_, body, err := c.get(ctx, "/repos/"+repo+"/contents/"+path+"?ref="+url.QueryEscape(ref), "application/vnd.github.raw", maxBodyBytes)
 	if e, ok := errors.AsType[*Error](err); ok && e.Status == http.StatusNotFound {
 		return nil, nil
 	}

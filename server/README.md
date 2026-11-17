@@ -86,6 +86,53 @@ The Mac app accepts plain `http://` only for `localhost`, `127.0.0.1`, `::1`, an
 
 After 10 failed sign-ins in a minute from one client IP address, the server rejects sign-ins from that address with status 429 for the rest of the minute. Successful sign-ins do not count. If the connection comes from a loopback address, for example from a reverse proxy on the same computer, the server uses the last address in the `X-Forwarded-For` header as the client address. Caddy sets this header by default. The server ignores the header on other connections, for example on a Tailscale address.
 
+## Review lanes
+
+A repository can sort its review requests into lanes with the file `.github/sheepdog.yml`. The server reads the file from the base branch of each PR, so a PR cannot change its own lane. A repository without the file gives rows without a lane.
+
+```yaml
+version: 1
+lanes:
+  safe:
+    authors: ["dependabot[bot]"]
+    paths: ["package.json", "package-lock.json"]
+    max_changed_lines: 50
+    max_score: 2
+    no_major_bumps: true
+    require_checks: true
+    action: approve-and-automerge
+    add_labels: [ready-to-merge]
+never_automatic:
+  paths: [".github/**", "src/sentry.ts"]
+```
+
+- `version` must be `1`. The server rejects unknown keys.
+- A PR goes to the first lane, in file order, whose conditions all match. A PR that matches no lane is in the lane `manual`. You cannot use `manual` as a lane name.
+- Every lane field is optional. A missing field sets no condition.
+- `authors` matches the login of the PR author. Upper and lower case are the same, and a trailing `[bot]` is ignored.
+- `paths` matches when every changed file matches one of the globs. `**` matches any number of directories.
+- `max_changed_lines` is the highest number of added plus deleted lines.
+- `max_score` is the highest classification score. Only a classification of the current head commit counts. The server does not classify by itself. Click "Classify" in the app.
+- `no_major_bumps: true` matches a title like `Bump expo from 57.0.1 to 57.2.0`, where the first number of both versions is the same. A title without this form does not match.
+- `require_checks: true` matches when all checks of the head commit passed. A PR without checks does not match.
+- `action` is `suggest` (the default) or `approve-and-automerge`.
+- `add_labels` are the labels that "approve and merge" adds before it approves.
+- `never_automatic.paths` puts a PR in `manual` when one changed file matches one of the globs. A PR with more than 100 changed files is also in `manual`.
+
+Each row has notes that explain its lane. For a PR in an `approve-and-automerge` lane, the notes list the conditions that matched. For every other PR, the notes list the conditions that failed in the closest `approve-and-automerge` lane, for example `Needs a classification of the current commit`.
+
+After a classification is stored, the server checks GitHub again at once, so the lane changes without a wait of 30 seconds.
+
+`POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge` takes `{"headSha"}`, the head commit that the user saw. The server reads the PR, the rules, and the classification again, and does these steps:
+
+1. It returns 404 if the PR is not in the last list of review requests of the user.
+2. It returns 409 if the head commit is not `headSha`, if the rules file is missing or not valid, or if the PR is not in an `approve-and-automerge` lane. The error text names the reason. The server changes nothing on GitHub in these cases.
+3. It adds the `add_labels` of the lane, and approves the head commit with the token of the user.
+4. It waits at most 3 seconds until GitHub knows the merge state. If the PR can be merged now, the server merges it, and only if its head is still the approved commit. It uses squash if the repository allows it, then a merge commit, then rebase. Otherwise it turns on auto-merge, and returns 409 `Turn on auto-merge in the repository settings` if the repository does not allow auto-merge.
+5. It returns `{"result": "merged"}` or `{"result": "auto-merge"}`, and checks GitHub again at once.
+
+A GitHub error, for example for an approval of your own PR, gives status 502 with the GitHub text.
+
 ## API
 
 All requests and responses use JSON. An error response has the form `{"error": "text"}`. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>`. A missing, unknown, or ended session gets status 401. A login that is no longer in `SHEEPDOG_ALLOWED_LOGINS` gets status 403.
@@ -103,13 +150,14 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, and `hasOpenRouterKey`. `PUT` also takes `openRouterKey`. An empty key deletes it. |
 | `GET /api/repos` | The repositories of the user. |
 | `GET /api/models` | The OpenRouter models that support structured outputs. |
-| `GET /api/review-requests` | The result of the last check of the selected repository. |
+| `GET /api/review-requests` | The result of the last check of the selected repository: `repo`, `fetchedAt`, `rows`, `lanes`, and the optional `error` and `rulesError`. Each row has `headSha`, and a `lane` with `name`, `action`, and `notes` when the repository has a valid rules file. `lanes` lists the lane names in file order, without `manual`. `rulesError` explains why the rules file is not valid. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}` | The details of a PR. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/review` | The latest stored AI review of the PR, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |
 | `GET /api/repos/{owner}/{name}/classifications` | The latest stored classification of each PR of the repository, ordered by PR number. An empty list when there is none. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/classification` | The latest stored classification of the PR, with a `score` from 1 (no danger, can be merged) to 10 (extreme danger) and a `reason`, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/classification` | Start a classification. Returns the task, or 409 if a classification of the PR is already running. A review and a classification of one PR can run at the same time. |
+| `POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge` | Approve and merge a PR of an `approve-and-automerge` lane. See [Review lanes](#review-lanes). |
 | `GET /api/tasks` | The running tasks of the user. |
 | `DELETE /api/tasks/{id}` | Stop a task. |
 | `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, `review`, and `classification`. A new stream of a session ends the older streams of that session. A user can open at most 8 streams at a time. One more stream gets status 429. |

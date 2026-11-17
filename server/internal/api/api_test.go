@@ -65,6 +65,13 @@ type fakeGitHub struct {
 	repoLists map[string]int
 	revoked   map[string]bool
 	renamed   map[string]string
+	// pull holds the lane facts of the PR in the list of each user.
+	pull fakePull
+	// rules maps "repo@ref" to the content of .github/sheepdog.yml.
+	rules       map[string]string
+	writes      []string
+	mergeReads  int
+	failApprove string
 }
 
 func (f *fakeGitHub) repoListCount(token string) int {
@@ -111,8 +118,14 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"login":%q,"id":%d}`, id.login, id.id)
 		return
 	}
+	if r.URL.Path != "/graphql" && r.Method != http.MethodGet {
+		f.serveWrite(w, r, id.login)
+		return
+	}
 	if r.Method == http.MethodGet {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/contents/.github/sheepdog.yml"):
+			f.serveRules(w, r)
 		case strings.HasSuffix(r.URL.Path, "/contents/AGENTS.md"):
 			fmt.Fprintf(w, "agents of %s at %s", id.login, r.URL.Query().Get("ref"))
 		case strings.Contains(r.URL.Path, "/pulls/"):
@@ -134,11 +147,15 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		nodes := ""
 		if q, _ := req.Variables["q"].(string); strings.Contains(q, "repo:getsentry/"+id.login+"-repo ") {
-			nodes = fmt.Sprintf(`{"number":%d,"title":"PR for %s","url":"u","isDraft":false,"updatedAt":"2026-01-01T00:00:00Z",
-				"additions":1,"deletions":2,"author":{"login":"x"},
-				"reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"User","login":%q}}]}}`, id.number, id.login, id.login)
+			nodes = f.pullNode(id, "CLEAN")
 		}
 		fmt.Fprintf(w, `{"data":{"search":{"nodes":[%s]},"repositoryOwner":{"teams":{"nodes":[]}}}}`, nodes)
+	case strings.Contains(req.Query, "autoMergeAllowed"):
+		f.serveMergePR(w, id, req.Variables)
+	case strings.Contains(req.Query, "enablePullRequestAutoMerge"):
+		variables, _ := json.Marshal(req.Variables)
+		f.record(id.login, "automerge "+string(variables))
+		io.WriteString(w, `{"data":{"enablePullRequestAutoMerge":{"clientMutationId":null}}}`)
 	case strings.Contains(req.Query, "repositories(first"):
 		f.mu.Lock()
 		f.repoLists[token]++
@@ -234,7 +251,10 @@ const defaultAllowed = "Alice, bob,carol"
 // newHarnessAt runs the API on the database at dbPath. close stops it, also before the test ends.
 func newHarnessAt(t *testing.T, dbPath, allowed string, setup func(*Server)) *harness {
 	t.Helper()
-	gh := &fakeGitHub{stalled: make(chan struct{}, 1), polls: map[string]int{}, repoLists: map[string]int{}, revoked: map[string]bool{}, renamed: map[string]string{}}
+	gh := &fakeGitHub{
+		stalled: make(chan struct{}, 1), polls: map[string]int{}, repoLists: map[string]int{}, revoked: map[string]bool{}, renamed: map[string]string{},
+		pull: defaultPull(), rules: map[string]string{},
+	}
 	ghServer := httptest.NewServer(gh)
 	openRouter := &fakeOpenRouter{started: make(chan struct{}, 4), cancelled: make(chan struct{}, 4)}
 	orServer := httptest.NewServer(openRouter)
@@ -546,6 +566,7 @@ func TestRoutesNeedSession(t *testing.T) {
 		{"GET", "/api/repos/getsentry/alice-repo/pulls/1"},
 		{"GET", "/api/repos/getsentry/alice-repo/pulls/1/review"},
 		{"POST", "/api/repos/getsentry/alice-repo/pulls/1/review"},
+		{"POST", "/api/repos/getsentry/alice-repo/pulls/1/approve-and-merge"},
 		{"GET", "/api/tasks"},
 		{"DELETE", "/api/tasks/x"},
 		{"GET", "/api/events"},

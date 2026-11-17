@@ -440,7 +440,7 @@ func TestRecordPublishesUnderServerLock(t *testing.T) {
 	}
 	h.server.hub.mu.Lock()
 	recorded := make(chan bool)
-	go func() { recorded <- h.server.record(id, run, nil, nil) }()
+	go func() { recorded <- h.server.record(id, run, Requests{}, nil) }()
 	held := false
 	for deadline := time.Now().Add(time.Second); !held && time.Now().Before(deadline); {
 		held = serverLocked()

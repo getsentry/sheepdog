@@ -336,3 +336,139 @@ func TestResponseSizeIsLimited(t *testing.T) {
 		t.Errorf("larger GraphQL response: %v", err)
 	}
 }
+
+func TestRulesFileIsReadFromRef(t *testing.T) {
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/app/contents/.github/sheepdog.yml" || r.URL.Query().Get("ref") != "release/1.0" ||
+			r.Header.Get("Accept") != "application/vnd.github.raw" {
+			t.Errorf("got %s with Accept %q", r.URL, r.Header.Get("Accept"))
+		}
+		io.WriteString(w, "version: 1\n")
+	})
+	text, err := client.RulesFile(context.Background(), "acme/app", "release/1.0")
+	if err != nil || text == nil || *text != "version: 1\n" {
+		t.Fatalf("got %v, %v", text, err)
+	}
+}
+
+func TestMissingRulesFileIsNil(t *testing.T) {
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"message":"Not Found"}`)
+	})
+	text, err := client.RulesFile(context.Background(), "acme/app", "main")
+	if err != nil || text != nil {
+		t.Fatalf("got %v, %v", text, err)
+	}
+}
+
+func TestErrorDetailsAreAdded(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"message":"Unprocessable Entity","errors":["Can not approve your own pull request"]}`:                              "GitHub: Unprocessable Entity: Can not approve your own pull request (HTTP 422)",
+		`{"message":"Validation Failed","errors":[{"resource":"Label","code":"invalid","message":"Bad name"},{"code":"x"}]}`: "GitHub: Validation Failed: Bad name (HTTP 422)",
+		`{"message":"Validation Failed","errors":[]}`:                                                                        "GitHub: Validation Failed (HTTP 422)",
+		`not json`: "GitHub: Unprocessable Entity (HTTP 422)",
+	} {
+		client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			io.WriteString(w, body)
+		})
+		if err := client.Approve(context.Background(), "acme/app", 1, "abc"); err == nil || err.Error() != want {
+			t.Errorf("body %s: got %v, want %s", body, err, want)
+		}
+	}
+}
+
+const mergePRResponse = `{"data":{"repository":{
+	"autoMergeAllowed": true, "squashMergeAllowed": false, "mergeCommitAllowed": true, "rebaseMergeAllowed": true,
+	"pullRequest": {
+		"id": "PR_kw1", "number": 7, "title": "Bump expo from 57.0.1 to 57.0.2", "url": "u", "isDraft": false,
+		"updatedAt": "2026-11-10T10:00:00Z", "additions": 3, "deletions": 1,
+		"headRefOid": "abc123", "baseRefName": "main", "mergeStateStatus": "BLOCKED",
+		"author": {"login": "dependabot"},
+		"files": {"totalCount": 2, "nodes": [{"path": "package.json"}, {"path": "package-lock.json"}]},
+		"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}
+	}
+}}}`
+
+func TestMergePRReadsFactsAndSettings(t *testing.T) {
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		req := readGraphQL(t, r)
+		if req.Variables["owner"] != "acme" || req.Variables["name"] != "app" || req.Variables["number"] != float64(7) ||
+			!strings.Contains(req.Query, "fragment rowFields") {
+			t.Errorf("request %+v", req)
+		}
+		io.WriteString(w, mergePRResponse)
+	})
+	pr, err := client.MergePR(context.Background(), "acme/app", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equal(t, pr.Files, []string{"package.json", "package-lock.json"})
+	if pr.ID != "PR_kw1" || pr.Number != 7 || pr.HeadSHA != "abc123" || pr.BaseRef != "main" || pr.MergeState != "BLOCKED" ||
+		pr.CheckState != "SUCCESS" || pr.TotalFiles != 2 || pr.Author != "dependabot" || !pr.AutoMergeAllowed || pr.MergeMethod() != "merge" {
+		t.Fatalf("got %+v", pr)
+	}
+}
+
+func TestMergeMethodPrefersSquash(t *testing.T) {
+	for _, c := range []struct {
+		pr   MergePR
+		want string
+	}{
+		{MergePR{SquashMergeAllowed: true, MergeCommitAllowed: true, RebaseMergeAllowed: true}, "squash"},
+		{MergePR{MergeCommitAllowed: true, RebaseMergeAllowed: true}, "merge"},
+		{MergePR{RebaseMergeAllowed: true}, "rebase"},
+	} {
+		if got := c.pr.MergeMethod(); got != c.want {
+			t.Errorf("%+v: %s, want %s", c.pr, got, c.want)
+		}
+	}
+}
+
+func TestMissingMergePRIsAnError(t *testing.T) {
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"data":{"repository":{"pullRequest":null}}}`)
+	})
+	if _, err := client.MergePR(context.Background(), "acme/app", 7); err == nil || err.Error() != "GitHub: pull request not found" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestWritesSendTheHeadSHA(t *testing.T) {
+	var got []string
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("%s has Content-Type %q", r.URL.Path, r.Header.Get("Content-Type"))
+		}
+		got = append(got, r.Method+" "+r.URL.Path+" "+string(body))
+		io.WriteString(w, `{"data":{"enablePullRequestAutoMerge":{"clientMutationId":null}}}`)
+	})
+	ctx := context.Background()
+	if err := client.AddLabels(ctx, "acme/app", 7, []string{"ready-to-merge"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Approve(ctx, "acme/app", 7, "abc123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Merge(ctx, "acme/app", 7, "abc123", "squash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.EnableAutoMerge(ctx, MergePR{ID: "PR_kw1", RebaseMergeAllowed: true}, "abc123"); err != nil {
+		t.Fatal(err)
+	}
+	equal(t, got[:3], []string{
+		`POST /repos/acme/app/issues/7/labels {"labels":["ready-to-merge"]}`,
+		`POST /repos/acme/app/pulls/7/reviews {"commit_id":"abc123","event":"APPROVE"}`,
+		`PUT /repos/acme/app/pulls/7/merge {"merge_method":"squash","sha":"abc123"}`,
+	})
+	var mutation graphqlRequest
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(got[3], "POST /graphql ")), &mutation); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(mutation.Query, "enablePullRequestAutoMerge") || !strings.Contains(mutation.Query, "expectedHeadOid: $sha") ||
+		mutation.Variables["id"] != "PR_kw1" || mutation.Variables["method"] != "REBASE" || mutation.Variables["sha"] != "abc123" {
+		t.Errorf("mutation %+v", mutation)
+	}
+}

@@ -10,18 +10,27 @@ import (
 	"sheepdog/internal/store"
 )
 
-// Requests is the result of the last poll. A failed poll keeps the rows of the poll before it.
+// Requests is the result of the last poll. A failed poll keeps the rows and lanes of the poll before it.
 type Requests struct {
-	Repo      string       `json:"repo"`
-	FetchedAt *time.Time   `json:"fetchedAt"`
-	Rows      []github.Row `json:"rows"`
-	Error     string       `json:"error,omitempty"`
+	Repo      string     `json:"repo"`
+	FetchedAt *time.Time `json:"fetchedAt"`
+	Rows      []Row      `json:"rows"`
+	// Lanes are the lane names in the order of the rules file, without manual.
+	Lanes      []string `json:"lanes"`
+	RulesError string   `json:"rulesError,omitempty"`
+	Error      string   `json:"error,omitempty"`
+}
+
+func emptyRequests(repo string) Requests {
+	return Requests{Repo: repo, Rows: []Row{}, Lanes: []string{}}
 }
 
 type pollRun struct {
 	cancel context.CancelFunc
 	token  string
 	login  string
+	// now asks the poller for a poll at once.
+	now chan struct{}
 }
 
 func (s *Server) requestsFor(user store.User) Requests {
@@ -30,7 +39,19 @@ func (s *Server) requestsFor(user store.User) Requests {
 	if result, ok := s.requests[user.ID]; ok {
 		return result
 	}
-	return Requests{Repo: user.Repo, Rows: []github.Row{}}
+	return emptyRequests(user.Repo)
+}
+
+// pollNow starts the next poll of the user at once and keeps the current list until it ends.
+func (s *Server) pollNow(userID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if run := s.polls[userID]; run != nil {
+		select {
+		case run.now <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // restartPoll stops the poller of the user and starts a new one with the stored token and repository.
@@ -53,14 +74,14 @@ func (s *Server) restartPoll(userID int64) error {
 		run.cancel()
 		delete(s.polls, userID)
 	}
-	empty := Requests{Repo: user.Repo, Rows: []github.Row{}}
+	empty := emptyRequests(user.Repo)
 	delete(s.requests, userID)
 	s.hub.publish(userID, "requests", empty)
 	if user.Repo == "" || !s.cfg.Allowed(user.Login) || s.ctx.Err() != nil {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	run := &pollRun{cancel: cancel, token: user.GitHubToken, login: user.Login}
+	run := &pollRun{cancel: cancel, token: user.GitHubToken, login: user.Login, now: make(chan struct{}, 1)}
 	s.polls[userID] = run
 	s.requests[userID] = empty
 	s.wg.Go(func() { s.poll(ctx, run, user) })
@@ -73,7 +94,7 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
 	for {
-		rows, err := client.ReviewRequests(ctx, user.Repo, user.Login)
+		polled, err := s.fetchRequests(ctx, client, user)
 		if ctx.Err() != nil {
 			return
 		}
@@ -81,7 +102,7 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 		if err != nil {
 			log.Printf("poll %s for %s: %v", user.Repo, user.Login, err)
 		}
-		if !s.record(user.ID, run, rows, err) {
+		if !s.record(user.ID, run, polled, err) {
 			return
 		}
 		if rejected {
@@ -91,13 +112,14 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-run.now:
 		}
 	}
 }
 
 // record stores and publishes a poll result. It returns false when a newer poller replaced this one.
 // It publishes under the server lock, so that a restart cannot publish its empty list before this result.
-func (s *Server) record(userID int64, run *pollRun, rows []github.Row, err error) bool {
+func (s *Server) record(userID int64, run *pollRun, polled Requests, err error) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.polls[userID] != run {
@@ -113,7 +135,9 @@ func (s *Server) record(userID int64, run *pollRun, rows []github.Row, err error
 	default:
 		now := time.Now()
 		result.FetchedAt = &now
-		result.Rows = rows
+		result.Rows = polled.Rows
+		result.Lanes = polled.Lanes
+		result.RulesError = polled.RulesError
 		result.Error = ""
 	}
 	s.requests[userID] = result

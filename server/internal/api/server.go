@@ -33,6 +33,9 @@ type Server struct {
 	writeTimeout   time.Duration
 	sessionCleanup time.Duration
 	signIns        *limiter
+	// mergeWait is how long approve and merge waits for GitHub to compute the merge state after the approval.
+	mergeWait  time.Duration
+	mergeRetry time.Duration
 
 	mu        sync.Mutex
 	polls     map[int64]*pollRun
@@ -62,6 +65,8 @@ func New(ctx context.Context, cfg config.Config, db *store.Store) *Server {
 		writeTimeout:   10 * time.Second,
 		sessionCleanup: time.Hour,
 		signIns:        newLimiter(10, time.Minute),
+		mergeWait:      3 * time.Second,
+		mergeRetry:     500 * time.Millisecond,
 		polls:          map[int64]*pollRun{},
 		restarts:       map[int64]uint64{},
 		requests:       map[int64]Requests{},
@@ -125,6 +130,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/classifications", s.authed(s.listClassifications))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.getClassification))
 	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.startClassification))
+	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge", s.authed(s.approveAndMerge))
 	mux.HandleFunc("GET /api/tasks", s.authed(s.listTasks))
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.authed(s.cancelTask))
 	mux.HandleFunc("GET /api/events", s.authed(s.events))

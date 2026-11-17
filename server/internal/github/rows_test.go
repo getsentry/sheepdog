@@ -181,6 +181,29 @@ func TestFieldsAreDecoded(t *testing.T) {
 	}
 }
 
+func TestLaneFactsAreDecoded(t *testing.T) {
+	data := `{"search": {"nodes": [{
+		"number": 9, "headRefOid": "abc", "baseRefName": "release", "mergeStateStatus": "CLEAN",
+		"files": {"totalCount": 120, "nodes": [{"path": "a.go"}, {"path": "docs/b.md"}]},
+		"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
+		"reviewRequests": {"nodes": []}
+	}, {
+		"number": 10, "files": null, "commits": {"nodes": [{"commit": {"statusCheckRollup": null}}]}, "reviewRequests": {"nodes": []}
+	}]}}`
+	rows, err := ToRows([]byte(data), "me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := rows[0]
+	equal(t, facts.Files, []string{"a.go", "docs/b.md"})
+	if facts.HeadSHA != "abc" || facts.BaseRef != "release" || facts.MergeState != "CLEAN" || facts.TotalFiles != 120 || facts.CheckState != "FAILURE" {
+		t.Fatalf("got %+v", facts)
+	}
+	if empty := rows[1]; empty.CheckState != "" || empty.Files == nil || empty.TotalFiles != 0 {
+		t.Fatalf("got %+v", empty)
+	}
+}
+
 func TestUserOwnedRepositoryHasNoTeams(t *testing.T) {
 	rows, err := ToRows([]byte(`{ "search": { "nodes": [] }, "repositoryOwner": {} }`), "me")
 	if err != nil || len(rows) != 0 {
