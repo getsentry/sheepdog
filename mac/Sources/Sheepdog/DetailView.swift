@@ -8,6 +8,7 @@ struct PRDetailView: View {
     @State private var detail: API.PullRequest?
     @State private var lines: [BodyLine] = []
     @State private var error: String?
+    @State private var batch: MergeBatch?
 
     var body: some View {
         ScrollView {
@@ -55,6 +56,11 @@ struct PRDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: row.updatedAt) { await load() }
+        .sheet(item: $batch) { batch in
+            MergeConfirmation(batch: batch) {
+                Task { await model.approveAndMerge(batch.rows) }
+            }
+        }
     }
 
     private var key: String { AppModel.key(repo: repo, number: row.number) }
@@ -64,6 +70,7 @@ struct PRDetailView: View {
     private var classification: API.Classification? { model.classifications[key] }
     private var classificationError: String? { model.classificationErrors[key] }
     private var isClassifying: Bool { model.isClassifying(repo: repo, number: row.number) }
+    private var isMerging: Bool { model.isMerging(repo: repo, number: row.number) }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -107,6 +114,22 @@ struct PRDetailView: View {
                     }
                 }
                 .disabled(detail == nil || isReviewing)
+                if row.canApproveAndMerge {
+                    Button {
+                        batch = MergeBatch(rows: [row])
+                    } label: {
+                        if isMerging {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Merging…")
+                            }
+                        } else {
+                            Text("Approve and merge")
+                        }
+                    }
+                    .disabled(isMerging)
+                }
                 Button("Open on GitHub") { NSWorkspace.shared.open(row.url) }
             }
             .foregroundStyle(.secondary)
@@ -122,6 +145,17 @@ struct PRDetailView: View {
     private func facts(_ detail: API.PullRequest) -> some View {
         let checks = detail.checks
         return Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
+            if let lane = row.lane {
+                fact("Lane") {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(lane.name)
+                        ForEach(lane.notes, id: \.self) { note in
+                            Text(note)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
             fact("Created") { Text(detail.createdAt, format: .dateTime) }
             fact("Changes") {
                 HStack(spacing: 4) {

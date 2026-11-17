@@ -4,6 +4,12 @@ A macOS app that shows the open pull requests in one GitHub repository where a r
 
 The app is a client of the Sheepdog server. It gets all data from the server and does not call GitHub or OpenRouter. Start a server first. See [server/README.md](../server/README.md).
 
+A repository can sort its review requests into lanes with the file `.github/sheepdog.yml`. See "Review lanes" in [server/README.md](../server/README.md). When the server sends lanes, the list shows one section for each lane in the order of the file, then the section `manual`. Each section header shows the lane name and the number of PRs. A section without PRs is not shown. A repository without the file gives one list without sections. If the file is not valid, the error shows above the list.
+
+Each row and the detail panel show the notes of the lane. The notes tell why a PR is in its lane, or what it needs to be in a lane with automatic merge, for example "Needs a classification of the current commit".
+
+For a lane with the action `approve-and-automerge`, the section header has the button "Approve and merge (N)", and the detail panel of each PR in that lane has the button "Approve and merge". Each button opens a confirmation that lists the PRs by number and title. The app sends nothing before you confirm. Then the server approves each PR with your GitHub account, and merges it or turns on auto-merge. The app sends one PR after another, with the head commit that you saw. If a PR fails, the other PRs still run, and the error above the list names each failed PR with the GitHub text.
+
 Run all commands in this directory.
 
 Build and test:

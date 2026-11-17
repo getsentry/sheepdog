@@ -202,7 +202,7 @@ private struct ErrorBanner: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let error = model.connectionError ?? model.error ?? model.requests?.error {
+        if let error = model.connectionError ?? model.error ?? model.requests?.error ?? model.requests?.rulesError {
             Text(error)
                 .foregroundStyle(.white)
                 .textSelection(.enabled)
@@ -216,6 +216,7 @@ private struct ErrorBanner: View {
 private struct RequestList: View {
     @Environment(AppModel.self) private var model
     @Binding var selection: API.Row.ID?
+    @State private var batch: MergeBatch?
 
     private var rows: [API.Row] { model.requests?.rows ?? [] }
 
@@ -235,14 +236,49 @@ private struct RequestList: View {
             } else if rows.isEmpty {
                 placeholder("No review requests")
             } else {
-                List(rows, selection: $selection) { row in
-                    RowView(row: row, classification: model.classifications[AppModel.key(repo: model.repo, number: row.number)])
+                List(selection: $selection) {
+                    if let sections = model.requests?.sections {
+                        ForEach(sections) { section in
+                            Section {
+                                ForEach(section.rows, content: rowView)
+                            } header: {
+                                header(section)
+                            }
+                        }
+                    } else {
+                        ForEach(rows, content: rowView)
+                    }
                 }
                 .contextMenu(forSelectionType: API.Row.ID.self) { ids in
                     Button("Open on GitHub") { open(ids) }
                 } primaryAction: { ids in
                     open(ids)
                 }
+            }
+        }
+        .sheet(item: $batch) { batch in
+            MergeConfirmation(batch: batch) {
+                Task { await model.approveAndMerge(batch.rows) }
+            }
+        }
+    }
+
+    private func rowView(_ row: API.Row) -> some View {
+        RowView(row: row, classification: model.classifications[AppModel.key(repo: model.repo, number: row.number)])
+    }
+
+    private func header(_ section: LaneSection) -> some View {
+        HStack {
+            Text(section.name)
+            Text(verbatim: "\(section.rows.count)")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Spacer()
+            let mergeable = section.mergeable
+            if !mergeable.isEmpty {
+                Button("Approve and merge (\(mergeable.count))") { batch = MergeBatch(rows: mergeable) }
+                    .controlSize(.small)
+                    .disabled(mergeable.contains { model.isMerging(repo: model.repo, number: $0.number) })
             }
         }
     }
@@ -282,6 +318,12 @@ private struct RowView: View {
                     }
                 }
                 .font(.caption)
+                if let notes = row.lane?.notes, !notes.isEmpty {
+                    Text(notes.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {

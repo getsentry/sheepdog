@@ -21,7 +21,19 @@ enum API {
         let repo: String
         let fetchedAt: Date?
         let rows: [Row]
+        // The lane names in the order of .github/sheepdog.yml, without manual.
+        let lanes: [String]
+        let rulesError: String?
         let error: String?
+    }
+
+    struct Lane: Decodable, Equatable, Sendable {
+        static let manual = "manual"
+        static let approveAndMerge = "approve-and-automerge"
+
+        let name: String
+        let action: String
+        let notes: [String]
     }
 
     struct Row: Decodable, Equatable, Identifiable, Sendable {
@@ -34,8 +46,12 @@ enum API {
         let deletions: Int
         let author: String
         let reasons: [String]
+        let headSha: String
+        // nil when the repository has no valid rules file.
+        let lane: Lane?
 
         var id: Int { number }
+        var canApproveAndMerge: Bool { lane?.action == Lane.approveAndMerge }
     }
 
     struct PullRequest: Decodable, Equatable, Sendable {
@@ -304,6 +320,12 @@ struct APIClient: Sendable {
 
     func startClassification(repo: String, number: Int) async throws -> API.RunningTask {
         try API.decode(API.RunningTask.self, from: try await send("POST", "api/repos/\(repo)/pulls/\(number)/classification"))
+    }
+
+    // The server checks the lane again, and refuses when the head commit is no longer headSha.
+    func approveAndMerge(repo: String, number: Int, headSha: String) async throws {
+        let body = try JSONEncoder().encode(["headSha": headSha])
+        _ = try await send("POST", "api/repos/\(repo)/pulls/\(number)/approve-and-merge", body: body)
     }
 
     func tasks() async throws -> [API.RunningTask] {

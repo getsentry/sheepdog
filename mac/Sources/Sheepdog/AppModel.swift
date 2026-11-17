@@ -60,6 +60,7 @@ final class AppModel {
     var classifications: [String: API.Classification] = [:]
     var classificationErrors: [String: String] = [:]
     private(set) var startingClassifications: Set<String> = []
+    private(set) var merging: Set<String> = []
 
     @ObservationIgnored private let session: URLSession
     @ObservationIgnored private let tokens: TokenStore
@@ -290,6 +291,33 @@ final class AppModel {
         }
     }
 
+    func isMerging(repo: String, number: Int) -> Bool {
+        merging.contains(Self.key(repo: repo, number: number))
+    }
+
+    // Runs one PR after another with the head commit that the user confirmed, and goes on after a failure.
+    func approveAndMerge(_ rows: [API.Row]) async {
+        let repo = repo
+        error = nil
+        var failures: [String] = []
+        for row in rows {
+            let key = Self.key(repo: repo, number: row.number)
+            guard !merging.contains(key) else { continue }
+            merging.insert(key)
+            defer { merging.remove(key) }
+            do {
+                try await checked { try await $0.approveAndMerge(repo: repo, number: row.number, headSha: row.headSha) }
+            } catch is CancellationError {
+                return
+            } catch {
+                failures.append("#\(row.number): \(error.localizedDescription)")
+            }
+        }
+        if !failures.isEmpty {
+            error = (["Approve and merge failed."] + failures).joined(separator: "\n")
+        }
+    }
+
     func cancelTask(_ id: String) async {
         error = nil
         do {
@@ -406,6 +434,7 @@ final class AppModel {
         classifications = [:]
         classificationErrors = [:]
         startingClassifications = []
+        merging = []
         classificationsRepo = nil
         signInError = message
         auth = .signedOut

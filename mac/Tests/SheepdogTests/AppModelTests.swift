@@ -18,7 +18,7 @@ private let review = API.Review(
 @Test func eventsUpdateTheModel() {
     let model = AppModel(tokens: MemoryTokens(nil).store)
     let repo = "getsentry/sentry-react-native"
-    model.apply(.requests(API.Requests(repo: repo, fetchedAt: start, rows: [], error: nil)))
+    model.apply(.requests(API.Requests(repo: repo, fetchedAt: start, rows: [], lanes: [], rulesError: nil, error: nil)))
     #expect(model.repo == repo)
     #expect(model.requests?.fetchedAt == start)
 
@@ -70,7 +70,7 @@ event: tasks
 data: []
 
 event: requests
-data: {"repo":"acme/app","fetchedAt":null,"rows":[]}
+data: {"repo":"acme/app","fetchedAt":null,"rows":[],"lanes":[]}
 
 
 """
@@ -547,4 +547,42 @@ private func classificationJSON(number: Int, score: Int, createdAt: String) -> S
     #expect(routeModel.repositoriesError == nil)
     #expect(routeTokens.value == nil)
     await gate.open()
+}
+
+@MainActor
+@Test func approveAndMergeRunsOneAfterAnotherAndGoesOnAfterAFailure() async throws {
+    let gate = Gate()
+    let seen = Mutex<[String]>([])
+    let running = Mutex((now: 0, most: 0))
+    let (model, _) = await signedIn { request in
+        guard request.path.hasSuffix("/approve-and-merge") else { return nil }
+        let body = (try? JSONDecoder().decode([String: String].self, from: request.body ?? Data())) ?? [:]
+        seen.withLock { $0.append("\(request.path) \(body["headSha"] ?? "")") }
+        running.withLock { $0.now += 1; $0.most = max($0.most, $0.now) }
+        defer { running.withLock { $0.now -= 1 } }
+        if request.path.contains("/pulls/1/") { await gate.wait() }
+        return request.path.contains("/pulls/2/")
+            ? error(502, "GitHub: Can not approve your own pull request")
+            : Reply(status: 200, body: #"{"result":"merged"}"#)
+    }
+    #expect(await until { model.requests != nil })
+    let rows = [1, 2, 3].map { laneRow($0, lane: "safe", action: API.Lane.approveAndMerge) }
+    let batch = Task { await model.approveAndMerge(rows) }
+    #expect(await until { seen.withLock { $0.count } == 1 })
+    #expect(model.isMerging(repo: "acme/app", number: 1))
+    #expect(!model.isMerging(repo: "acme/app", number: 2))
+    // A second click on the running PR sends nothing.
+    await model.approveAndMerge([rows[0]])
+    await gate.open()
+    await batch.value
+
+    #expect(seen.withLock { $0 } == [
+        "/api/repos/acme/app/pulls/1/approve-and-merge sha1",
+        "/api/repos/acme/app/pulls/2/approve-and-merge sha2",
+        "/api/repos/acme/app/pulls/3/approve-and-merge sha3",
+    ])
+    #expect(running.withLock { $0.most } == 1)
+    #expect(model.error == "Approve and merge failed.\n#2: GitHub: Can not approve your own pull request")
+    #expect(model.merging.isEmpty)
+    await model.signOut()
 }
