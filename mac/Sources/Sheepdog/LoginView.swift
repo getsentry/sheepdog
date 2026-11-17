@@ -7,7 +7,7 @@ struct LoginView: View {
     @State private var token = ""
     @State private var isSigningIn = false
 
-    private static let newTokenURL = URL(string: "https://github.com/settings/tokens/new?scopes=repo,read:org&description=Review%20Queue")!
+    private static let newTokenURL = URL(string: "https://github.com/settings/tokens/new?scopes=repo,read:org&description=Sheepdog%20Token")!
 
     var body: some View {
         switch model.auth {

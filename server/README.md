@@ -8,7 +8,7 @@ The server serves several users. Each user signs in with an own GitHub token and
 
 Each user signs in with a classic personal access token (PAT). Fine-grained tokens do not work.
 
-1. Open [the new token page](https://github.com/settings/tokens/new?scopes=repo,read:org&description=Review%20Queue). The link selects the scopes `repo` and `read:org`. The server rejects a token without these two scopes.
+1. Open [the new token page](https://github.com/settings/tokens/new?scopes=repo,read:org&description=Sheepdog%20Token). The link selects the scopes `repo` and `read:org`. The server rejects a token without these two scopes.
 2. Set an expiration date. A token without an expiration date stays valid until you delete it.
 3. Click "Generate token" and copy the token.
 4. If your organization uses SAML single sign-on (SSO), open [the token list](https://github.com/settings/tokens), click "Configure SSO" next to the token, and click "Authorize" for the organization. Without this step, GitHub does not show the data of that organization. The server then shows an error with the authorization link from GitHub.
