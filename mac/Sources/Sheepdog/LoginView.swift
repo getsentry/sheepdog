@@ -20,7 +20,7 @@ struct LoginView: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Sign in to Review Queue")
+            Text("Sign in to Sheepdog")
                 .font(.title2.bold())
             Form {
                 TextField("Server address", text: $server, prompt: Text("http://127.0.0.1:8080"))

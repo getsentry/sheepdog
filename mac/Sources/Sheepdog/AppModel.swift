@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import OSLog
 
-private let log = Logger(subsystem: "com.alwx.reviewqueue", category: "server")
+private let log = Logger(subsystem: "com.alwx.sheepdog", category: "server")
 
 enum AuthState: Equatable {
     case checking

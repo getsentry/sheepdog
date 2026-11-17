@@ -1,7 +1,7 @@
 import Foundation
 import Synchronization
 import Testing
-@testable import ReviewQueue
+@testable import Sheepdog
 
 // Samples from a run of the Go server, with shorter row lists and PR body, and without the session token.
 private let signInJSON = #"{"login":"alwx","sessionToken":"session-token"}"#

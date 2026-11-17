@@ -11,11 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct ReviewQueueApp: App {
+struct SheepdogApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
     var body: some Scene {
-        Window("Review Queue", id: "main") {
+        Window("Sheepdog", id: "main") {
             Group {
                 if delegate.model.auth == .signedIn {
                     MainView()

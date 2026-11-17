@@ -1,6 +1,6 @@
 import Foundation
 import Synchronization
-@testable import ReviewQueue
+@testable import Sheepdog
 
 struct Reply: Sendable {
     let status: Int

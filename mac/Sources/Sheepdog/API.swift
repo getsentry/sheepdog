@@ -1,9 +1,9 @@
 import Foundation
 import OSLog
 
-private let log = Logger(subsystem: "com.alwx.reviewqueue", category: "server")
+private let log = Logger(subsystem: "com.alwx.sheepdog", category: "server")
 
-// The JSON types of the Review Queue server.
+// The JSON types of the Sheepdog server.
 enum API {
     struct Session: Decodable, Equatable, Sendable {
         let sessionToken: String

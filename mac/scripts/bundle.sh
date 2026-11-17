@@ -3,10 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 swift build -c release
-app=build/ReviewQueue.app
+app=build/Sheepdog.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
-cp "$(swift build -c release --show-bin-path)/ReviewQueue" "$app/Contents/MacOS/ReviewQueue"
+cp "$(swift build -c release --show-bin-path)/Sheepdog" "$app/Contents/MacOS/Sheepdog"
 
 cat > "$app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -14,11 +14,11 @@ cat > "$app/Contents/Info.plist" <<'EOF'
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>ReviewQueue</string>
+    <string>Sheepdog</string>
     <key>CFBundleIdentifier</key>
-    <string>com.alwx.reviewqueue</string>
+    <string>com.alwx.sheepdog</string>
     <key>CFBundleName</key>
-    <string>Review Queue</string>
+    <string>Sheepdog</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

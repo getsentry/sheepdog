@@ -12,7 +12,7 @@ struct KeychainError: LocalizedError {
 }
 
 enum Keychain {
-    private static let service = "com.alwx.reviewqueue"
+    private static let service = "com.alwx.sheepdog"
 
     private static func query(_ account: String) -> [CFString: Any] {
         [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account]

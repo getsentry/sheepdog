@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import ReviewQueue
+@testable import Sheepdog
 
 @Test func checksTextListsNonZeroCounts() {
     let checks = API.PullRequest.Checks(passed: 23, failed: 10, pending: 0, skipped: 34)

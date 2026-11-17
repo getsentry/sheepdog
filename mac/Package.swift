@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "ReviewQueue",
+    name: "Sheepdog",
     platforms: [.macOS(.v15)],
     targets: [
-        .executableTarget(name: "ReviewQueue"),
-        .testTarget(name: "ReviewQueueTests", dependencies: ["ReviewQueue"]),
+        .executableTarget(name: "Sheepdog"),
+        .testTarget(name: "SheepdogTests", dependencies: ["Sheepdog"]),
     ]
 )
