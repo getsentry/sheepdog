@@ -23,7 +23,7 @@ struct LoginView: View {
             Text("Sign in to Sheepdog")
                 .font(.title2.bold())
             Form {
-                TextField("Server address", text: $server, prompt: Text("http://127.0.0.1:8080"))
+                TextField("Server address", text: $server, prompt: Text(AppModel.defaultServerURL))
                 SecureField("GitHub token", text: $token, prompt: Text("ghp_…"))
                     .onSubmit(signIn)
             }
@@ -51,7 +51,7 @@ struct LoginView: View {
         }
         .padding(24)
         .frame(width: 460)
-        .onAppear { server = model.serverURL }
+        .onAppear { server = model.serverURL.isEmpty ? AppModel.defaultServerURL : model.serverURL }
     }
 
     private func signIn() {

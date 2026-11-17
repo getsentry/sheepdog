@@ -20,7 +20,7 @@ scripts/bundle.sh
 open build/Sheepdog.app
 ```
 
-To sign in, enter the server address and a GitHub classic personal access token with the scopes `repo` and `read:org`. The "Create token on GitHub" button opens the GitHub page for a new token with these scopes. The app sends the token to the server once and does not store it.
+To sign in, enter the server address and a GitHub classic personal access token. The address field starts with `http://127.0.0.1:8080`, the default address of the server, until you sign in to another one. Use a token with the scopes `repo` and `read:org`. The "Create token on GitHub" button opens the GitHub page for a new token with these scopes. The app sends the token to the server once and does not store it.
 
 The server address must start with `https://`, for example `https://reviews.example.com` or `https://box.tailnet.ts.net`. Plain `http://` works only for `localhost` and IP addresses, for example `http://127.0.0.1:8080` or the Tailscale IP address of the server, because macOS blocks plain HTTP to host names. See the TLS section of [server/README.md](../server/README.md).
 

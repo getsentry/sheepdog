@@ -32,6 +32,8 @@ struct AddressError: LocalizedError {
 @Observable
 final class AppModel {
     static let serverURLKey = "serverURL"
+    // The address where the server listens without SHEEPDOG_ADDR.
+    static let defaultServerURL = "http://127.0.0.1:8080"
 
     var auth: AuthState = .checking
     var serverURL = UserDefaults.standard.string(forKey: AppModel.serverURLKey) ?? ""
