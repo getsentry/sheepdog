@@ -17,6 +17,7 @@ type Row struct {
 	Additions  int       `json:"additions"`
 	Deletions  int       `json:"deletions"`
 	Author     string    `json:"author"`
+	AuthorBot  bool      `json:"-"`
 	Reasons    []string  `json:"reasons"`
 	HeadSHA    string    `json:"headSha"`
 	BaseRef    string    `json:"-"`
@@ -35,7 +36,7 @@ type nodes[T any] struct {
 const rowFields = `
 fragment rowFields on PullRequest {
   number title url isDraft updatedAt additions deletions headRefOid baseRefName mergeStateStatus
-  author { login }
+  author { __typename login }
   files(first: 100) { totalCount nodes { path } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 }`
@@ -52,7 +53,8 @@ type rowNode struct {
 	BaseRef    string    `json:"baseRefName"`
 	MergeState string    `json:"mergeStateStatus"`
 	Author     *struct {
-		Login string `json:"login"`
+		Typename string `json:"__typename"`
+		Login    string `json:"login"`
 	} `json:"author"`
 	Files *struct {
 		TotalCount int `json:"totalCount"`
@@ -87,6 +89,7 @@ func (pr rowNode) row() Row {
 	}
 	if pr.Author != nil {
 		row.Author = pr.Author.Login
+		row.AuthorBot = pr.Author.Typename == "Bot"
 	}
 	if pr.Files != nil {
 		row.TotalFiles = pr.Files.TotalCount

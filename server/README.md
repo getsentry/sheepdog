@@ -109,7 +109,7 @@ never_automatic:
 - `version` must be `1`. The server rejects unknown keys.
 - A PR goes to the first lane, in file order, whose conditions all match. A PR that matches no lane is in the lane `manual`. You cannot use `manual` as a lane name.
 - Every lane field is optional. A missing field sets no condition.
-- `authors` matches the login of the PR author. Upper and lower case are the same, and a trailing `[bot]` is ignored.
+- `authors` matches the login of the PR author. Upper and lower case are the same. An entry that ends with `[bot]`, for example `dependabot[bot]`, matches only a GitHub App author with that name, so that a person with the login `dependabot` does not match. An entry without `[bot]` matches any author with that login. In YAML, write an entry with `[bot]` in quotes.
 - `paths` matches when every changed file matches one of the globs. `**` matches any number of directories.
 - `max_changed_lines` is the highest number of added plus deleted lines.
 - `max_score` is the highest classification score. Only a classification of the current head commit counts. The server does not classify by itself. Click "Classify" in the app.
@@ -128,7 +128,7 @@ After a classification is stored, the server checks GitHub again at once, so the
 1. It returns 404 if the PR is not in the last list of review requests of the user.
 2. It returns 409 if the head commit is not `headSha`, if the rules file is missing or not valid, or if the PR is not in an `approve-and-automerge` lane. The error text names the reason. The server changes nothing on GitHub in these cases.
 3. It adds the `add_labels` of the lane, and approves the head commit with the token of the user.
-4. It waits at most 3 seconds until GitHub knows the merge state. If the PR can be merged now, the server merges it, and only if its head is still the approved commit. It uses squash if the repository allows it, then a merge commit, then rebase. Otherwise it turns on auto-merge, and returns 409 `Turn on auto-merge in the repository settings` if the repository does not allow auto-merge.
+4. It waits at most 3 seconds until GitHub knows the merge state. If the PR can be merged now, the server merges it, and only if its head is still the approved commit. It uses squash if the repository allows it, then a merge commit, then rebase. Otherwise it turns on auto-merge, and returns 409 if the repository does not allow auto-merge. The labels and the approval stay in that case, and the error says so.
 5. It returns `{"result": "merged"}` or `{"result": "auto-merge"}`, and checks GitHub again at once.
 
 A GitHub error, for example for an approval of your own PR, gives status 502 with the GitHub text.

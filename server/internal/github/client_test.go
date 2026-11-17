@@ -385,7 +385,7 @@ const mergePRResponse = `{"data":{"repository":{
 		"id": "PR_kw1", "number": 7, "title": "Bump expo from 57.0.1 to 57.0.2", "url": "u", "isDraft": false,
 		"updatedAt": "2026-11-10T10:00:00Z", "additions": 3, "deletions": 1,
 		"headRefOid": "abc123", "baseRefName": "main", "mergeStateStatus": "BLOCKED",
-		"author": {"login": "dependabot"},
+		"author": {"__typename": "Bot", "login": "dependabot"},
 		"files": {"totalCount": 2, "nodes": [{"path": "package.json"}, {"path": "package-lock.json"}]},
 		"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}
 	}
@@ -406,7 +406,7 @@ func TestMergePRReadsFactsAndSettings(t *testing.T) {
 	}
 	equal(t, pr.Files, []string{"package.json", "package-lock.json"})
 	if pr.ID != "PR_kw1" || pr.Number != 7 || pr.HeadSHA != "abc123" || pr.BaseRef != "main" || pr.MergeState != "BLOCKED" ||
-		pr.CheckState != "SUCCESS" || pr.TotalFiles != 2 || pr.Author != "dependabot" || !pr.AutoMergeAllowed || pr.MergeMethod() != "merge" {
+		pr.CheckState != "SUCCESS" || pr.TotalFiles != 2 || pr.Author != "dependabot" || !pr.AuthorBot || !pr.AutoMergeAllowed || pr.MergeMethod() != "merge" {
 		t.Fatalf("got %+v", pr)
 	}
 }

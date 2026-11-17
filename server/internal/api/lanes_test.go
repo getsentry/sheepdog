@@ -87,7 +87,7 @@ func (f *fakeGitHub) pullNode(id identity, mergeState string) string {
 		"id": fmt.Sprintf("PR_%d", id.number), "number": id.number, "title": p.title, "url": "u", "isDraft": false,
 		"updatedAt": "2026-01-01T00:00:00Z", "additions": p.additions, "deletions": p.deletions,
 		"headRefOid": p.headSHA, "baseRefName": p.base, "mergeStateStatus": mergeState,
-		"author":         map[string]string{"login": p.author},
+		"author":         map[string]string{"__typename": authorType(p.author), "login": p.author},
 		"files":          map[string]any{"totalCount": len(p.files), "nodes": files},
 		"commits":        map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{"statusCheckRollup": rollup}}}},
 		"reviewRequests": map[string]any{"nodes": []any{map[string]any{"requestedReviewer": map[string]string{"__typename": "User", "login": id.login}}}},
@@ -354,7 +354,7 @@ func TestApproveAndMergeTurnsOnAutoMerge(t *testing.T) {
 	h.github.setPull(func(p *fakePull) { p.mergeStates = []string{"BLOCKED", "UNKNOWN"}; p.noSquash = true })
 	body := map[string]string{"headSha": "sha-1"}
 
-	h.wantError("POST", approvePath, alice, body, http.StatusConflict, "Turn on auto-merge in the repository settings")
+	h.wantError("POST", approvePath, alice, body, http.StatusConflict, "Approved, but not merged: GitHub cannot merge the pull request yet, and the repository does not allow auto-merge. Turn on auto-merge in the repository settings, or merge on GitHub")
 
 	h.github.setPull(func(p *fakePull) { p.autoMerge = true })
 	var result map[string]string
@@ -406,4 +406,11 @@ func TestApproveAndMergeIsPerUser(t *testing.T) {
 			t.Errorf("write %s does not use the token of bob for his PR", write)
 		}
 	}
+}
+
+func authorType(login string) string {
+	if login == "dependabot" {
+		return "Bot"
+	}
+	return "User"
 }

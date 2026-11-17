@@ -102,14 +102,15 @@ func TestParseErrors(t *testing.T) {
 
 func TestConditions(t *testing.T) {
 	base := PR{
-		Author:     "dependabot",
-		Title:      "Bump expo from 57.0.1 to 57.2.0",
-		Additions:  10,
-		Deletions:  5,
-		Files:      []string{"package.json", "package-lock.json"},
-		TotalFiles: 2,
-		HeadSHA:    "abc",
-		CheckState: "SUCCESS",
+		Author:      "dependabot",
+		AuthorIsBot: true,
+		Title:       "Bump expo from 57.0.1 to 57.2.0",
+		Additions:   10,
+		Deletions:   5,
+		Files:       []string{"package.json", "package-lock.json"},
+		TotalFiles:  2,
+		HeadSHA:     "abc",
+		CheckState:  "SUCCESS",
 	}
 	current := &Classification{HeadSHA: "abc", Score: 2}
 	cases := []struct {
@@ -124,6 +125,8 @@ func TestConditions(t *testing.T) {
 		{"authors rest login", LaneRule{Authors: []string{"dependabot[bot]"}}, func(pr *PR) { pr.Author = "dependabot[bot]" }, nil, true},
 		{"authors plain list", LaneRule{Authors: []string{"Dependabot"}}, func(pr *PR) { pr.Author = "dependabot[bot]" }, nil, true},
 		{"authors miss", LaneRule{Authors: []string{"dependabot[bot]"}}, func(pr *PR) { pr.Author = "alice" }, nil, false},
+		{"authors bot entry needs a bot", LaneRule{Authors: []string{"renovate[bot]"}}, func(pr *PR) { pr.Author = "renovate"; pr.AuthorIsBot = false }, nil, false},
+		{"authors plain entry matches a person", LaneRule{Authors: []string{"alice"}}, func(pr *PR) { pr.Author = "Alice"; pr.AuthorIsBot = false }, nil, true},
 		{"paths match", LaneRule{Paths: []string{"package.json", "package-lock.json"}}, nil, nil, true},
 		{"paths miss", LaneRule{Paths: []string{"package.json"}}, nil, nil, false},
 		{"paths double star", LaneRule{Paths: []string{"docs/**"}}, func(pr *PR) { pr.Files = []string{"docs/a.md", "docs/guide/deep/b.md"} }, nil, true},
@@ -176,14 +179,15 @@ func sampleRules(t *testing.T) Rules {
 func TestEvaluateSample(t *testing.T) {
 	rules := sampleRules(t)
 	dependabot := PR{
-		Author:     "dependabot",
-		Title:      "Bump axios from 1.7.2 to 1.7.4",
-		Additions:  8,
-		Deletions:  8,
-		Files:      []string{"package.json", "package-lock.json"},
-		TotalFiles: 2,
-		HeadSHA:    "head",
-		CheckState: "SUCCESS",
+		Author:      "dependabot",
+		AuthorIsBot: true,
+		Title:       "Bump axios from 1.7.2 to 1.7.4",
+		Additions:   8,
+		Deletions:   8,
+		Files:       []string{"package.json", "package-lock.json"},
+		TotalFiles:  2,
+		HeadSHA:     "head",
+		CheckState:  "SUCCESS",
 	}
 	current := &Classification{HeadSHA: "head", Score: 1}
 

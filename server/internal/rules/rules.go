@@ -41,13 +41,15 @@ type LaneRule struct {
 }
 
 type PR struct {
-	Author     string
-	Title      string
-	Additions  int
-	Deletions  int
-	Files      []string
-	TotalFiles int
-	HeadSHA    string
+	Author string
+	// AuthorIsBot is true for a GitHub App author, whose GraphQL type is Bot.
+	AuthorIsBot bool
+	Title       string
+	Additions   int
+	Deletions   int
+	Files       []string
+	TotalFiles  int
+	HeadSHA     string
 	// CheckState is the check rollup state of the head commit, for example SUCCESS. Empty means no checks.
 	CheckState string
 }
@@ -210,7 +212,7 @@ func check(lane LaneRule, pr PR, classification *Classification) (matched, faile
 	if len(lane.Authors) > 0 {
 		ok := false
 		for _, author := range lane.Authors {
-			ok = ok || normalizeLogin(author) == normalizeLogin(pr.Author)
+			ok = ok || authorMatches(author, pr)
 		}
 		result(ok, "Author "+pr.Author, "Author "+pr.Author+" is not in the lane")
 	}
@@ -255,6 +257,14 @@ func check(lane LaneRule, pr PR, classification *Classification) (matched, faile
 		result(pr.CheckState == "SUCCESS", "Checks are green", "Checks are not green")
 	}
 	return matched, failed
+}
+
+// An entry with [bot] matches only a bot author, so that a person with the login renovate cannot match renovate[bot].
+func authorMatches(entry string, pr PR) bool {
+	if strings.HasSuffix(strings.ToLower(entry), "[bot]") && !pr.AuthorIsBot {
+		return false
+	}
+	return normalizeLogin(entry) == normalizeLogin(pr.Author)
 }
 
 func normalizeLogin(login string) string {

@@ -89,14 +89,15 @@ func rulesAt(ctx context.Context, client *github.Client, repo, base string) (*ru
 
 func lanePR(row github.Row) rules.PR {
 	return rules.PR{
-		Author:     row.Author,
-		Title:      row.Title,
-		Additions:  row.Additions,
-		Deletions:  row.Deletions,
-		Files:      row.Files,
-		TotalFiles: row.TotalFiles,
-		HeadSHA:    row.HeadSHA,
-		CheckState: row.CheckState,
+		Author:      row.Author,
+		AuthorIsBot: row.AuthorBot,
+		Title:       row.Title,
+		Additions:   row.Additions,
+		Deletions:   row.Deletions,
+		Files:       row.Files,
+		TotalFiles:  row.TotalFiles,
+		HeadSHA:     row.HeadSHA,
+		CheckState:  row.CheckState,
 	}
 }
 
@@ -196,7 +197,7 @@ func (s *Server) approveAndMerge(w http.ResponseWriter, r *http.Request, user st
 		return
 	}
 	if !settled.AutoMergeAllowed {
-		writeError(w, http.StatusConflict, "Turn on auto-merge in the repository settings")
+		writeError(w, http.StatusConflict, "Approved, but not merged: GitHub cannot merge the pull request yet, and the repository does not allow auto-merge. Turn on auto-merge in the repository settings, or merge on GitHub")
 		return
 	}
 	if err := client.EnableAutoMerge(ctx, settled, pr.HeadSHA); err != nil {
