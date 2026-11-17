@@ -44,7 +44,7 @@ func (s sealer) open(sealed []byte, userID int64, column string) (string, error)
 	}
 	plaintext, err := s.aead.Open(nil, sealed[:size], sealed[size:], associatedData(userID, column))
 	if err != nil {
-		return "", errors.New("store: cannot decrypt a secret; is REVIEWQ_SECRET_KEY the same key that wrote the database?")
+		return "", errors.New("store: cannot decrypt a secret; is SHEEPDOG_SECRET_KEY the same key that wrote the database?")
 	}
 	return string(plaintext), nil
 }

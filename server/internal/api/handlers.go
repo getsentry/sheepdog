@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"reviewqueue/internal/github"
-	"reviewqueue/internal/openrouter"
-	"reviewqueue/internal/store"
-	"reviewqueue/internal/tasks"
+	"sheepdog/internal/github"
+	"sheepdog/internal/openrouter"
+	"sheepdog/internal/store"
+	"sheepdog/internal/tasks"
 )
 
 const repoCacheTTL = 10 * time.Minute

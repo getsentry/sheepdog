@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"reviewqueue/internal/store"
-	"reviewqueue/internal/tasks"
+	"sheepdog/internal/store"
+	"sheepdog/internal/tasks"
 )
 
 const reviewPath = "/api/repos/getsentry/sentry-cocoa/pulls/7/review"

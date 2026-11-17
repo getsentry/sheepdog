@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"reviewqueue/internal/store"
-	"reviewqueue/internal/tasks"
+	"sheepdog/internal/store"
+	"sheepdog/internal/tasks"
 )
 
 const (

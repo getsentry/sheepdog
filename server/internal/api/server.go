@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"reviewqueue/internal/config"
-	"reviewqueue/internal/github"
-	"reviewqueue/internal/store"
-	"reviewqueue/internal/tasks"
+	"sheepdog/internal/config"
+	"sheepdog/internal/github"
+	"sheepdog/internal/store"
+	"sheepdog/internal/tasks"
 )
 
 const maxBodyBytes = 64 << 10

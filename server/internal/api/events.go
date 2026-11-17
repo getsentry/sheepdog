@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"reviewqueue/internal/store"
+	"sheepdog/internal/store"
 )
 
 type event struct {

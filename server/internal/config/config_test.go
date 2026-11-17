@@ -14,13 +14,13 @@ func env(values map[string]string) func(string) string {
 
 func TestLoadDefaults(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
-		"REVIEWQ_SECRET_KEY":     validKey,
-		"REVIEWQ_ALLOWED_LOGINS": " Alwx , octocat,,",
+		"SHEEPDOG_SECRET_KEY":     validKey,
+		"SHEEPDOG_ALLOWED_LOGINS": " Alwx , octocat,,",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != "127.0.0.1:8080" || cfg.DBPath != "reviewqueue.db" {
+	if cfg.Addr != "127.0.0.1:8080" || cfg.DBPath != "sheepdog.db" {
 		t.Errorf("defaults: addr %q, db %q", cfg.Addr, cfg.DBPath)
 	}
 	if cfg.GitHubURL != "https://api.github.com" || cfg.OpenRouterURL != "https://openrouter.ai/api/v1" {
@@ -36,10 +36,10 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadOverrides(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
-		"REVIEWQ_ADDR":           "0.0.0.0:9000",
-		"REVIEWQ_DB":             "/tmp/x.db",
-		"REVIEWQ_SECRET_KEY":     validKey,
-		"REVIEWQ_ALLOWED_LOGINS": "alwx",
+		"SHEEPDOG_ADDR":           "0.0.0.0:9000",
+		"SHEEPDOG_DB":             "/tmp/x.db",
+		"SHEEPDOG_SECRET_KEY":     validKey,
+		"SHEEPDOG_ALLOWED_LOGINS": "alwx",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -54,11 +54,11 @@ func TestLoadErrorsNameTheVariable(t *testing.T) {
 		values  map[string]string
 		varName string
 	}{
-		"missing key":    {map[string]string{"REVIEWQ_ALLOWED_LOGINS": "alwx"}, "REVIEWQ_SECRET_KEY"},
-		"short key":      {map[string]string{"REVIEWQ_SECRET_KEY": base64.StdEncoding.EncodeToString(make([]byte, 16)), "REVIEWQ_ALLOWED_LOGINS": "alwx"}, "REVIEWQ_SECRET_KEY"},
-		"invalid base64": {map[string]string{"REVIEWQ_SECRET_KEY": "not base64!", "REVIEWQ_ALLOWED_LOGINS": "alwx"}, "REVIEWQ_SECRET_KEY"},
-		"missing logins": {map[string]string{"REVIEWQ_SECRET_KEY": validKey}, "REVIEWQ_ALLOWED_LOGINS"},
-		"empty logins":   {map[string]string{"REVIEWQ_SECRET_KEY": validKey, "REVIEWQ_ALLOWED_LOGINS": " , "}, "REVIEWQ_ALLOWED_LOGINS"},
+		"missing key":    {map[string]string{"SHEEPDOG_ALLOWED_LOGINS": "alwx"}, "SHEEPDOG_SECRET_KEY"},
+		"short key":      {map[string]string{"SHEEPDOG_SECRET_KEY": base64.StdEncoding.EncodeToString(make([]byte, 16)), "SHEEPDOG_ALLOWED_LOGINS": "alwx"}, "SHEEPDOG_SECRET_KEY"},
+		"invalid base64": {map[string]string{"SHEEPDOG_SECRET_KEY": "not base64!", "SHEEPDOG_ALLOWED_LOGINS": "alwx"}, "SHEEPDOG_SECRET_KEY"},
+		"missing logins": {map[string]string{"SHEEPDOG_SECRET_KEY": validKey}, "SHEEPDOG_ALLOWED_LOGINS"},
+		"empty logins":   {map[string]string{"SHEEPDOG_SECRET_KEY": validKey, "SHEEPDOG_ALLOWED_LOGINS": " , "}, "SHEEPDOG_ALLOWED_LOGINS"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

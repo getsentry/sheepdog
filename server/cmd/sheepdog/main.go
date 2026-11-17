@@ -12,14 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	"reviewqueue/internal/api"
-	"reviewqueue/internal/config"
-	"reviewqueue/internal/store"
+	"sheepdog/internal/api"
+	"sheepdog/internal/config"
+	"sheepdog/internal/store"
 )
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "reviewqueue:", err)
+		fmt.Fprintln(os.Stderr, "sheepdog:", err)
 		os.Exit(1)
 	}
 }

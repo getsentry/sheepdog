@@ -11,7 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"reviewqueue/internal/review"
+	"sheepdog/internal/review"
 )
 
 var ErrNotFound = errors.New("store: not found")

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"reviewqueue/internal/openrouter"
+	"sheepdog/internal/openrouter"
 )
 
 var input = Input{

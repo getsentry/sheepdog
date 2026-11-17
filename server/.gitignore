@@ -1,4 +1,4 @@
-/reviewqueue
+/sheepdog
 *.db
 *.db-shm
 *.db-wal

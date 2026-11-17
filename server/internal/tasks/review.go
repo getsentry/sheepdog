@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	"reviewqueue/internal/github"
-	"reviewqueue/internal/openrouter"
-	"reviewqueue/internal/review"
-	"reviewqueue/internal/store"
+	"sheepdog/internal/github"
+	"sheepdog/internal/openrouter"
+	"sheepdog/internal/review"
+	"sheepdog/internal/store"
 )
 
 // ReviewEvent reports the end of a review. It has a review or an error. A review that is cancelled before it is stored sends no event.

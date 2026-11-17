@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"reviewqueue/internal/config"
-	"reviewqueue/internal/store"
+	"sheepdog/internal/config"
+	"sheepdog/internal/store"
 )
 
 const (
@@ -241,8 +241,8 @@ func newHarnessAt(t *testing.T, dbPath, allowed string, setup func(*Server)) *ha
 
 	cfg, err := config.Load(func(name string) string {
 		return map[string]string{
-			"REVIEWQ_SECRET_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-			"REVIEWQ_ALLOWED_LOGINS": allowed,
+			"SHEEPDOG_SECRET_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			"SHEEPDOG_ALLOWED_LOGINS": allowed,
 		}[name]
 	})
 	if err != nil {

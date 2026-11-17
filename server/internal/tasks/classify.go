@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	"reviewqueue/internal/github"
-	"reviewqueue/internal/openrouter"
-	"reviewqueue/internal/review"
-	"reviewqueue/internal/store"
+	"sheepdog/internal/github"
+	"sheepdog/internal/openrouter"
+	"sheepdog/internal/review"
+	"sheepdog/internal/store"
 )
 
 // ClassificationEvent reports the end of a classification. It has a classification or an error.

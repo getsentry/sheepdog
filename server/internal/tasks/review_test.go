@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"reviewqueue/internal/store"
+	"sheepdog/internal/store"
 )
 
 func TestStoredReviewIsPublishedAfterCancel(t *testing.T) {

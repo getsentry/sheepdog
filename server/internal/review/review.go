@@ -7,7 +7,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
-	"reviewqueue/internal/openrouter"
+	"sheepdog/internal/openrouter"
 )
 
 // MaxDiffCharacters counts Unicode code points (runes). The Swift app counted grapheme clusters, so a diff with combined characters is cut a little earlier.

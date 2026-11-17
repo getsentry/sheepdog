@@ -1,6 +1,6 @@
-# Review Queue server
+# Sheepdog server
 
-The Review Queue server finds the open pull requests (PRs) in one GitHub repository where a review is requested from you or from one of your teams. It also runs AI reviews of PRs and gives PRs a danger score from 1 to 10 with [OpenRouter](https://openrouter.ai). The Mac app in `../mac` is a client of this server.
+The Sheepdog server finds the open pull requests (PRs) in one GitHub repository where a review is requested from you or from one of your teams. It also runs AI reviews of PRs and gives PRs a danger score from 1 to 10 with [OpenRouter](https://openrouter.ai). The Mac app in `../mac` is a client of this server.
 
 The server serves several users. Each user signs in with an own GitHub token and has an own OpenRouter key, model, repository, reviews, and classifications. The server checks GitHub every 30 seconds for each user who has selected a repository, also when no client is connected. The server keeps its data in one SQLite file. It encrypts the GitHub tokens and the OpenRouter keys in that file.
 
@@ -23,7 +23,7 @@ A sign-in gives the client a session token. Each device has its own session, and
 
 If you lose a device, delete the GitHub token on GitHub, sign in with a new token, and use `DELETE /api/sessions` to end the sessions on all devices.
 
-If you remove a login from `REVIEWQ_ALLOWED_LOGINS` and restart the server, the server stops polling for that user and rejects its sessions with status 403.
+If you remove a login from `SHEEPDOG_ALLOWED_LOGINS` and restart the server, the server stops polling for that user and rejects its sessions with status 403.
 
 ## Configure
 
@@ -31,10 +31,10 @@ The server reads its configuration from environment variables.
 
 | Variable | Required | Default | Value |
 | --- | --- | --- | --- |
-| `REVIEWQ_SECRET_KEY` | yes | | Base64 text of 32 random bytes. The server uses it to encrypt tokens and keys. |
-| `REVIEWQ_ALLOWED_LOGINS` | yes | | The GitHub logins that can sign in, separated by commas, for example `alice,bob`. Upper and lower case are the same. |
-| `REVIEWQ_ADDR` | no | `127.0.0.1:8080` | The address and port where the server listens. |
-| `REVIEWQ_DB` | no | `reviewqueue.db` | The path of the SQLite file. The server creates it. |
+| `SHEEPDOG_SECRET_KEY` | yes | | Base64 text of 32 random bytes. The server uses it to encrypt tokens and keys. |
+| `SHEEPDOG_ALLOWED_LOGINS` | yes | | The GitHub logins that can sign in, separated by commas, for example `alice,bob`. Upper and lower case are the same. |
+| `SHEEPDOG_ADDR` | no | `127.0.0.1:8080` | The address and port where the server listens. |
+| `SHEEPDOG_DB` | no | `sheepdog.db` | The path of the SQLite file. The server creates it. |
 
 Make the secret key:
 
@@ -52,14 +52,14 @@ You need Go 1.27.1 or later. Run all commands in this directory.
 
 ```sh
 go vet ./... && go test ./...
-go build ./cmd/reviewqueue
-REVIEWQ_SECRET_KEY='<key>' REVIEWQ_ALLOWED_LOGINS=alice,bob ./reviewqueue
+go build ./cmd/sheepdog
+SHEEPDOG_SECRET_KEY='<key>' SHEEPDOG_ALLOWED_LOGINS=alice,bob ./sheepdog
 ```
 
 The server has no C dependencies. To build for a Linux server on a Mac:
 
 ```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/reviewqueue
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/sheepdog
 ```
 
 The server stops on SIGINT or SIGTERM. It cancels the running reviews and classifications. Finished ones stay in the database. A request that waits for GitHub or OpenRouter at that time gets status 503 with the text `The server is shutting down`.
@@ -70,12 +70,12 @@ The server itself does not use TLS. GitHub tokens and session tokens go over the
 
 - Keep the default address `127.0.0.1:8080`, and put a reverse proxy with TLS in front of the server.
 - Keep the default address, and run `tailscale serve --bg 8080` on the same computer. [Tailscale](https://tailscale.com) then serves the server at `https://<computer>.<tailnet>.ts.net` with a certificate, only to your tailnet. HTTPS certificates must be on in the DNS settings of the tailnet.
-- Listen only on a Tailscale IP address, for example `REVIEWQ_ADDR=100.101.102.103:8080`. Tailscale encrypts the traffic between your devices. Clients then use the IP address, for example `http://100.101.102.103:8080`.
+- Listen only on a Tailscale IP address, for example `SHEEPDOG_ADDR=100.101.102.103:8080`. Tailscale encrypts the traffic between your devices. Clients then use the IP address, for example `http://100.101.102.103:8080`.
 
 This [Caddy](https://caddyserver.com) configuration gets a certificate for the domain and sends all requests to the server. `flush_interval -1` sends live events to the clients at once.
 
 ```caddyfile
-reviewqueue.example.com {
+sheepdog.example.com {
 	reverse_proxy 127.0.0.1:8080 {
 		flush_interval -1
 	}
@@ -88,7 +88,7 @@ After 10 failed sign-ins in a minute from one client IP address, the server reje
 
 ## API
 
-All requests and responses use JSON. An error response has the form `{"error": "text"}`. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>`. A missing, unknown, or ended session gets status 401. A login that is no longer in `REVIEWQ_ALLOWED_LOGINS` gets status 403.
+All requests and responses use JSON. An error response has the form `{"error": "text"}`. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>`. A missing, unknown, or ended session gets status 401. A login that is no longer in `SHEEPDOG_ALLOWED_LOGINS` gets status 403.
 
 GitHub repository names ignore case. The server changes them to lower case, so settings, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
 

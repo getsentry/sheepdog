@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"reviewqueue/internal/github"
-	"reviewqueue/internal/store"
+	"sheepdog/internal/github"
+	"sheepdog/internal/store"
 )
 
 // Requests is the result of the last poll. A failed poll keeps the rows of the poll before it.

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"reviewqueue/internal/openrouter"
+	"sheepdog/internal/openrouter"
 )
 
 const ClassifySystem = `You classify GitHub pull requests for a human reviewer. The result is shown only to that reviewer and is never published.
