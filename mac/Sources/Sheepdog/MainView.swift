@@ -264,7 +264,7 @@ private struct RequestList: View {
     }
 
     private func rowView(_ row: API.Row) -> some View {
-        RowView(row: row, classification: model.classifications[AppModel.key(repo: model.repo, number: row.number)])
+        RowView(row: row, classification: ShownClassification(row: row, stored: model.classifications[AppModel.key(repo: model.repo, number: row.number)]))
     }
 
     private func header(_ section: LaneSection) -> some View {
@@ -292,7 +292,7 @@ private struct RequestList: View {
 
 private struct RowView: View {
     let row: API.Row
-    let classification: API.Classification?
+    let classification: ShownClassification?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -343,9 +343,14 @@ private struct RowView: View {
         .contentShape(Rectangle())
     }
 
-    // A classification from before the last change of the PR is dimmed.
-    private func score(_ classification: API.Classification) -> some View {
-        let outdated = row.updatedAt > classification.prUpdatedAt
+    // An app classification from before the last change of the PR is dimmed.
+    private func score(_ classification: ShownClassification) -> some View {
+        let outdated = classification.isOutdated(prUpdatedAt: row.updatedAt)
+        let help: String = switch classification {
+        case .ci: "Danger \(classification.score)/10 from CI"
+        case .app where outdated: "Danger \(classification.score)/10. The PR changed after this classification."
+        case .app: "Danger \(classification.score)/10"
+        }
         return Text(verbatim: "\(classification.score)")
             .font(.callout.bold().monospacedDigit())
             .foregroundStyle(.white)
@@ -353,7 +358,7 @@ private struct RowView: View {
             .padding(.horizontal, 4)
             .background(dangerColor(classification.score), in: RoundedRectangle(cornerRadius: 4))
             .opacity(outdated ? 0.45 : 1)
-            .help(outdated ? "Danger \(classification.score)/10. The PR changed after this classification." : "Danger \(classification.score)/10")
+            .help(help)
     }
 }
 

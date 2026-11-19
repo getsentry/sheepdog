@@ -8,6 +8,8 @@ A repository can sort its review requests into lanes with the file `.github/shee
 
 Each row and the detail panel show the notes of the lane. The notes tell why a PR is in its lane, or what it needs to be in a lane with automatic merge, for example "Needs a classification of the current commit".
 
+Each row and the detail panel show the danger score of the PR from 1 to 10. A repository can classify each PR in GitHub Actions. See "Classification in CI" in [server/README.md](../server/README.md). If the server sends a CI score for the current head commit, the app shows it, and the detail panel shows "From CI" and the model. If there is no CI score, the app shows the classification that you started with "Classify". When the PR changed after that classification, the score is dimmed. The "Classify" button always starts a new classification in the app, also when a CI score exists. The CI score stays visible while it exists.
+
 For a lane with the action `approve-and-automerge`, the section header has the button "Approve and merge (N)", and the detail panel of each PR in that lane has the button "Approve and merge". Each button opens a confirmation that lists the PRs by number and title. The app sends nothing before you confirm. Then the server approves each PR with your GitHub account, and merges it or turns on auto-merge. The app sends one PR after another, with the head commit that you saw. If a PR fails, the other PRs still run, and the error above the list names each failed PR with the GitHub text.
 
 Run all commands in this directory.

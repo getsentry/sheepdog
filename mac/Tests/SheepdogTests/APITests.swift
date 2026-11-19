@@ -77,7 +77,7 @@ private func date(_ text: String) throws -> Date {
 }
 
 // The shape of a poll of a repository with .github/sheepdog.yml, as the Go server encodes it.
-private let lanesJSON = #"{"repo":"getsentry/reviewer-react-native-sample","fetchedAt":"2026-11-17T14:00:00Z","rows":[{"number":12,"title":"Bump expo from 57.0.1 to 57.0.2","url":"https://github.com/getsentry/reviewer-react-native-sample/pull/12","isDraft":false,"updatedAt":"2026-11-17T13:50:00Z","additions":6,"deletions":6,"author":"dependabot","reasons":["you"],"headSha":"aaa111","lane":{"name":"safe","action":"approve-and-automerge","notes":["Author dependabot","Changes only lane paths","12 changed lines","Score 1","No major update","Checks are green"]}},{"number":13,"title":"Send more events","url":"https://github.com/getsentry/reviewer-react-native-sample/pull/13","isDraft":false,"updatedAt":"2026-11-17T13:40:00Z","additions":30,"deletions":2,"author":"alwx","reasons":["you"],"headSha":"bbb222","lane":{"name":"manual","action":"suggest","notes":["Changes src/sentry.ts"]}}],"lanes":["safe","docs","quick_look"],"rulesError":".github/sheepdog.yml on release is not valid: version must be 1"}"#
+private let lanesJSON = #"{"repo":"getsentry/reviewer-react-native-sample","fetchedAt":"2026-11-17T14:00:00Z","rows":[{"number":12,"title":"Bump expo from 57.0.1 to 57.0.2","url":"https://github.com/getsentry/reviewer-react-native-sample/pull/12","isDraft":false,"updatedAt":"2026-11-17T13:50:00Z","additions":6,"deletions":6,"author":"dependabot","reasons":["you"],"headSha":"aaa111","lane":{"name":"safe","action":"approve-and-automerge","notes":["Author dependabot","Changes only lane paths","12 changed lines","Score 1","No major update","Checks are green"]},"classification":{"source":"ci","score":1,"reason":"Patch update of expo.","model":"google/gemini-4-hydrogen","headSha":"aaa111"}},{"number":13,"title":"Send more events","url":"https://github.com/getsentry/reviewer-react-native-sample/pull/13","isDraft":false,"updatedAt":"2026-11-17T13:40:00Z","additions":30,"deletions":2,"author":"alwx","reasons":["you"],"headSha":"bbb222","lane":{"name":"manual","action":"suggest","notes":["Changes src/sentry.ts"]}}],"lanes":["safe","docs","quick_look"],"rulesError":".github/sheepdog.yml on release is not valid: version must be 1"}"#
 
 @Test func decodesLanes() throws {
     let requests = try API.decode(API.Requests.self, from: Data(lanesJSON.utf8))
@@ -90,6 +90,8 @@ private let lanesJSON = #"{"repo":"getsentry/reviewer-react-native-sample","fetc
     #expect(requests.rows[0].canApproveAndMerge)
     #expect(requests.rows[1].lane == API.Lane(name: "manual", action: "suggest", notes: ["Changes src/sentry.ts"]))
     #expect(!requests.rows[1].canApproveAndMerge)
+    #expect(requests.rows[0].classification == API.CIClassification(source: "ci", score: 1, reason: "Patch update of expo.", model: "google/gemini-4-hydrogen", headSha: "aaa111"))
+    #expect(requests.rows[1].classification == nil)
 }
 
 @Test func approveAndMergeSendsTheHeadCommit() async throws {

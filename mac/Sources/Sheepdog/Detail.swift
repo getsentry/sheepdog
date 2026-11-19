@@ -11,6 +11,43 @@ extension API.PullRequest.Checks {
     }
 }
 
+// The score that the list and the detail panel show for a row.
+enum ShownClassification: Equatable {
+    case ci(API.CIClassification)
+    case app(API.Classification)
+
+    // The CI score of the head commit comes before the stored app classification.
+    init?(row: API.Row, stored: API.Classification?) {
+        if let ci = row.classification {
+            self = .ci(ci)
+        } else if let stored {
+            self = .app(stored)
+        } else {
+            return nil
+        }
+    }
+
+    var score: Int {
+        switch self {
+        case .ci(let value): value.score
+        case .app(let value): value.score
+        }
+    }
+
+    var reason: String {
+        switch self {
+        case .ci(let value): value.reason
+        case .app(let value): value.reason
+        }
+    }
+
+    // A CI score is always for the current head commit.
+    func isOutdated(prUpdatedAt: Date) -> Bool {
+        guard case .app(let value) = self else { return false }
+        return prUpdatedAt > value.prUpdatedAt
+    }
+}
+
 struct BodyLine: Identifiable, Equatable {
     enum Kind: Equatable {
         case text

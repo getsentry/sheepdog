@@ -49,6 +49,8 @@ enum API {
         let headSha: String
         // nil when the repository has no valid rules file.
         let lane: Lane?
+        // nil without a CI score for the current head commit.
+        let classification: CIClassification?
 
         var id: Int { number }
         var canApproveAndMerge: Bool { lane?.action == Lane.approveAndMerge }
@@ -121,6 +123,15 @@ enum API {
         let diffTruncated: Bool
         let prUpdatedAt: Date
         let createdAt: Date
+    }
+
+    // The score of the Sheepdog workflow in GitHub Actions for the head commit of a row.
+    struct CIClassification: Decodable, Equatable, Sendable {
+        let source: String
+        let score: Int
+        let reason: String
+        let model: String
+        let headSha: String
     }
 
     struct RunningTask: Decodable, Equatable, Identifiable, Sendable {

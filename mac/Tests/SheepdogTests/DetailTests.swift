@@ -37,3 +37,33 @@ private func plain(_ lines: [BodyLine]) -> [String] {
 @Test func emptyBodyHasNoLines() {
     #expect(bodyLines("<!-- only a comment -->\n\n").isEmpty)
 }
+
+private let ciScore = API.CIClassification(source: "ci", score: 2, reason: "Patch update.", model: "repo/model", headSha: "sha1")
+
+private func stored(score: Int, prUpdatedAt: Date) -> API.Classification {
+    API.Classification(
+        repo: "acme/app", number: 1, headSha: "old", model: "user/model", score: score, reason: "Stored.",
+        diffTruncated: false, prUpdatedAt: prUpdatedAt, createdAt: prUpdatedAt
+    )
+}
+
+@Test func ciScoreComesBeforeTheAppClassification() throws {
+    let row = laneRow(1, lane: nil, classification: ciScore)
+    let shown = try #require(ShownClassification(row: row, stored: stored(score: 8, prUpdatedAt: .distantPast)))
+    #expect(shown == .ci(ciScore))
+    #expect(shown.score == 2 && shown.reason == "Patch update.")
+    #expect(!shown.isOutdated(prUpdatedAt: row.updatedAt))
+}
+
+@Test func appClassificationWithoutCIScore() throws {
+    let row = laneRow(1, lane: nil)
+    #expect(ShownClassification(row: row, stored: nil) == nil)
+
+    let old = stored(score: 8, prUpdatedAt: row.updatedAt.addingTimeInterval(-60))
+    let outdated = try #require(ShownClassification(row: row, stored: old))
+    #expect(outdated == .app(old))
+    #expect(outdated.score == 8 && outdated.isOutdated(prUpdatedAt: row.updatedAt))
+
+    let current = try #require(ShownClassification(row: row, stored: stored(score: 3, prUpdatedAt: row.updatedAt)))
+    #expect(!current.isOutdated(prUpdatedAt: row.updatedAt))
+}

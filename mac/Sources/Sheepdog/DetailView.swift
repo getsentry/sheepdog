@@ -27,8 +27,8 @@ struct PRDetailView: View {
                                 .foregroundStyle(.red)
                                 .textSelection(.enabled)
                         }
-                        if let classification {
-                            ClassificationSection(classification: classification, prUpdatedAt: row.updatedAt)
+                        if let shown = ShownClassification(row: row, stored: classification) {
+                            ClassificationSection(classification: shown, prUpdatedAt: row.updatedAt)
                         }
                         if let reviewError {
                             Text(reviewError)
@@ -225,7 +225,7 @@ struct PRDetailView: View {
 }
 
 private struct ClassificationSection: View {
-    let classification: API.Classification
+    let classification: ShownClassification
     let prUpdatedAt: Date
 
     var body: some View {
@@ -238,16 +238,16 @@ private struct ClassificationSection: View {
                     Text(label)
                         .font(.headline)
                     Spacer()
-                    Text("\(classification.model), \(classification.createdAt.formatted(date: .omitted, time: .shortened))")
+                    Text(source)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if prUpdatedAt > classification.prUpdatedAt {
+                if classification.isOutdated(prUpdatedAt: prUpdatedAt) {
                     Text("The PR changed after this classification.")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-                if classification.diffTruncated {
+                if case .app(let stored) = classification, stored.diffTruncated {
                     Text("The diff was too large. The model saw only the first 200,000 characters.")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -258,6 +258,13 @@ private struct ClassificationSection: View {
         .textSelection(.enabled)
         .padding(12)
         .background(dangerColor(classification.score).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var source: String {
+        switch classification {
+        case .ci(let value): "From CI, \(value.model)"
+        case .app(let value): "\(value.model), \(value.createdAt.formatted(date: .omitted, time: .shortened))"
+        }
     }
 
     private var label: String {
