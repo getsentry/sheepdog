@@ -10,13 +10,18 @@ inputs:
 runs:
   using: composite
   steps:
+    # setup-go refuses paths with "..", so resolve the server directory first.
+    - name: Find the Sheepdog source
+      id: source
+      shell: bash
+      run: echo "server=$(cd "$GITHUB_ACTION_PATH/../server" && pwd)" >> "$GITHUB_OUTPUT"
     - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
-        go-version-file: ${{ github.action_path }}/../server/go.mod
-        cache-dependency-path: ${{ github.action_path }}/../server/go.sum
+        go-version-file: ${{ steps.source.outputs.server }}/go.mod
+        cache-dependency-path: ${{ steps.source.outputs.server }}/go.sum
     - name: Build Sheepdog
       shell: bash
-      working-directory: ${{ github.action_path }}/../server
+      working-directory: ${{ steps.source.outputs.server }}
       run: go build -o "$RUNNER_TEMP/sheepdog" ./cmd/sheepdog
     - name: Classify
       shell: bash
