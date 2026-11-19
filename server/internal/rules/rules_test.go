@@ -71,11 +71,12 @@ func TestParseDefaults(t *testing.T) {
 
 func TestParseClassification(t *testing.T) {
 	cases := map[string]ClassificationRule{
-		"version: 1\n":                                             {},
-		"version: 1\nclassification:\n":                            {},
-		"version: 1\nclassification:\n  model: a/b\n":              {Model: "a/b"},
-		"version: 1\nclassification: {model: a/b, ci: true}\n":     {Model: "a/b", CI: true},
-		"version: 1\nclassification:\n  model: a/b\n  ci: false\n": {Model: "a/b"},
+		"version: 1\n":                                                 {},
+		"version: 1\nclassification:\n":                                {},
+		"version: 1\nclassification:\n  model: a/b\n":                  {Model: "a/b"},
+		"version: 1\nclassification: {model: a/b, ci: true}\n":         {Model: "a/b", CI: true},
+		"version: 1\nclassification:\n  model: a/b\n  ci: false\n":     {Model: "a/b"},
+		"version: 1\nclassification:\n  model: a/b\n  comment: true\n": {Model: "a/b", Comment: true},
 	}
 	for data, want := range cases {
 		rules, err := Parse([]byte(data))
@@ -104,6 +105,7 @@ func TestParseErrors(t *testing.T) {
 		{"invalid lane glob", "version: 1\nlanes:\n  docs:\n    paths: [\"docs/[a\"]\n", `lane "docs": paths: invalid glob "docs/[a"`},
 		{"invalid never glob", "version: 1\nnever_automatic:\n  paths: [\"{a\"]\n", `never_automatic.paths: invalid glob "{a"`},
 		{"empty glob", "version: 1\nnever_automatic:\n  paths: [\"\"]\n", `invalid glob ""`},
+		{"comment without model", "version: 1\nclassification:\n  comment: true\n", `classification.comment needs a classification.model`},
 		{"unknown classification key", "version: 1\nclassification:\n  model: a/b\n  models: [c]\n", `field models not found`},
 		{"empty model", "version: 1\nclassification:\n  model: \" \"\n", "classification.model must not be empty"},
 		{"classification without model", "version: 1\nclassification: {}\n", "classification.model must not be empty"},

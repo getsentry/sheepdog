@@ -84,13 +84,72 @@ func classify(ctx context.Context, args []string, getenv func(string) string, st
 			return fmt.Errorf("write the step summary: %w", err)
 		}
 	}
-	_, err = fmt.Fprintln(stdout, notice(github.CIAnnotationTitle, string(message)))
-	return err
+	if _, err := fmt.Fprintln(stdout, notice(github.CIAnnotationTitle, string(message))); err != nil {
+		return err
+	}
+	if !parsed.Classification.Comment {
+		return nil
+	}
+	// The score is already in the annotation, so a failed comment is a warning and the job still passes.
+	if err := upsertComment(ctx, gh, repo, *number, commentBody(c)); err != nil {
+		_, err = fmt.Fprintln(stdout, workflowCommand("warning", "Sheepdog comment", "could not post the classification comment: "+err.Error()+". The workflow needs the permission pull-requests: write."))
+		return err
+	}
+	return nil
 }
 
-// notice formats a workflow command. GitHub reads %25, %0D, and %0A in the message as %, CR, and LF.
+// commentMarker starts the one comment that Sheepdog keeps up to date on a pull request.
+const commentMarker = "<!-- sheepdog-classification -->"
+
+// The comment of the job token has this author.
+const actionsBot = "github-actions[bot]"
+
+func upsertComment(ctx context.Context, gh *github.Client, repo string, number int, body string) error {
+	comments, err := gh.IssueComments(ctx, repo, number)
+	if err != nil {
+		return err
+	}
+	for _, comment := range comments {
+		if comment.User.Login == actionsBot && strings.HasPrefix(comment.Body, commentMarker) {
+			return gh.UpdateIssueComment(ctx, repo, comment.ID, body)
+		}
+	}
+	return gh.CreateIssueComment(ctx, repo, number, body)
+}
+
+// commentBody quotes the reason of the model, which comes from untrusted PR content, so that it cannot mention people or add a second marker.
+func commentBody(c github.CIClassification) string {
+	reason := strings.NewReplacer("@", "@\u200b", "<!--", "&lt;!--").Replace(strings.TrimSpace(c.Reason))
+	quoted := "> " + strings.ReplaceAll(reason, "\n", "\n> ")
+	text := fmt.Sprintf("%s\n### Sheepdog classification: %d/10, %s\n\n%s\n\nModel `%s`, commit %s.", commentMarker, c.Score, dangerLabel(c.Score), quoted, c.Model, c.HeadSHA)
+	if c.DiffTruncated {
+		text += fmt.Sprintf(" The model saw only the first %d characters of the diff.", review.MaxDiffCharacters)
+	}
+	return text + "\n"
+}
+
+func dangerLabel(score int) string {
+	switch {
+	case score <= 1:
+		return "no danger, can be merged"
+	case score <= 3:
+		return "low danger"
+	case score <= 6:
+		return "medium danger"
+	case score <= 9:
+		return "high danger"
+	default:
+		return "extreme danger"
+	}
+}
+
 func notice(title, message string) string {
-	return "::notice title=" + title + "::" + strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A").Replace(message)
+	return workflowCommand("notice", title, message)
+}
+
+// workflowCommand formats a workflow command. GitHub reads %25, %0D, and %0A in the message as %, CR, and LF.
+func workflowCommand(command, title, message string) string {
+	return "::" + command + " title=" + title + "::" + strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A").Replace(message)
 }
 
 func appendSummary(path string, c github.CIClassification) error {

@@ -28,11 +28,16 @@ type classifyHarness struct {
 	rules                    string
 	openRouterStatus         int
 	sentModel                string
+	// comments is the JSON of the comment list. commentStatus makes every comment request fail.
+	comments      string
+	commentStatus int
+	created       []string
+	updated       map[string]string
 }
 
 func newClassifyHarness(t *testing.T) *classifyHarness {
 	t.Helper()
-	h := &classifyHarness{rules: repoRules}
+	h := &classifyHarness{rules: repoRules, comments: "[]", updated: map[string]string{}}
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+testToken {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -47,6 +52,22 @@ func newClassifyHarness(t *testing.T) *classifyHarness {
 			io.WriteString(w, "diff --git a/package.json b/package.json\n")
 		case r.URL.Path == "/repos/acme/app/contents/.github/sheepdog.yml" && r.URL.Query().Get("ref") == "main" && h.rules != "":
 			io.WriteString(w, h.rules)
+		case strings.HasPrefix(r.URL.Path, "/repos/acme/app/issues/") && h.commentStatus != 0:
+			w.WriteHeader(h.commentStatus)
+			io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/app/issues/7/comments":
+			io.WriteString(w, h.comments)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/app/issues/7/comments":
+			var body struct{ Body string }
+			json.NewDecoder(r.Body).Decode(&body)
+			h.created = append(h.created, body.Body)
+			w.WriteHeader(http.StatusCreated)
+			io.WriteString(w, `{}`)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/acme/app/issues/comments/"):
+			var body struct{ Body string }
+			json.NewDecoder(r.Body).Decode(&body)
+			h.updated[strings.TrimPrefix(r.URL.Path, "/repos/acme/app/issues/comments/")] = body.Body
+			io.WriteString(w, `{}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			io.WriteString(w, `{"message":"Not Found"}`)
@@ -183,5 +204,78 @@ func TestNoticeEscapesMessage(t *testing.T) {
 func TestUnknownCommandIsAnError(t *testing.T) {
 	if err := run([]string{"clasify"}); err == nil || !strings.Contains(err.Error(), `unknown command "clasify"`) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+const commentRules = "version: 1\nclassification:\n  model: repo/model\n  ci: true\n  comment: true\n"
+
+func TestClassifyPostsNoCommentByDefault(t *testing.T) {
+	h := newClassifyHarness(t)
+	h.commentStatus = http.StatusTeapot
+	if _, err := h.run([]string{"--pr", "7"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.created) != 0 || len(h.updated) != 0 {
+		t.Errorf("comments without classification.comment: %v %v", h.created, h.updated)
+	}
+}
+
+func TestClassifyCreatesOneComment(t *testing.T) {
+	h := newClassifyHarness(t)
+	h.rules = commentRules
+	// A comment of another user with the marker must not be edited.
+	h.comments = `[{"id":5,"body":"<!-- sheepdog-classification -->fake 1/10","user":{"login":"mallory","type":"User"}}]`
+	out, err := h.run([]string{"--pr", "7"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out, "\n") != 1 {
+		t.Errorf("output %q, want only the annotation", out)
+	}
+	if len(h.created) != 1 || len(h.updated) != 0 {
+		t.Fatalf("created %v, updated %v", h.created, h.updated)
+	}
+	body := h.created[0]
+	for _, part := range []string{"<!-- sheepdog-classification -->", "2/10, low danger", "> 100% a lock file.\n> No code.", "Model `repo/model`, commit abc123."} {
+		if !strings.Contains(body, part) {
+			t.Errorf("comment %q has no %q", body, part)
+		}
+	}
+}
+
+func TestClassifyUpdatesItsComment(t *testing.T) {
+	h := newClassifyHarness(t)
+	h.rules = commentRules
+	h.comments = `[{"id":5,"body":"hello","user":{"login":"alice","type":"User"}},{"id":9,"body":"<!-- sheepdog-classification -->\nold","user":{"login":"github-actions[bot]","type":"Bot"}}]`
+	if _, err := h.run([]string{"--pr", "7"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.created) != 0 || !strings.Contains(h.updated["9"], "2/10") || len(h.updated) != 1 {
+		t.Errorf("created %v, updated %v", h.created, h.updated)
+	}
+}
+
+func TestClassifyCommentFailureIsAWarning(t *testing.T) {
+	h := newClassifyHarness(t)
+	h.rules = commentRules
+	h.commentStatus = http.StatusForbidden
+	out, err := h.run([]string{"--pr", "7"}, nil)
+	if err != nil {
+		t.Fatalf("a failed comment fails the job: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "::notice title=sheepdog-classification::") ||
+		!strings.HasPrefix(lines[1], "::warning title=Sheepdog comment::") || !strings.Contains(lines[1], "pull-requests: write") {
+		t.Errorf("output %q", out)
+	}
+}
+
+func TestCommentBodyQuotesTheReason(t *testing.T) {
+	body := commentBody(github.CIClassification{Score: 9, Reason: "Ask @getsentry/everyone.\n<!-- sheepdog-classification -->", Model: "m", HeadSHA: "abc", DiffTruncated: true})
+	if strings.Contains(body, "@getsentry") || strings.Count(body, "<!-- sheepdog-classification -->") != 1 {
+		t.Errorf("body %q can mention people or holds a second marker", body)
+	}
+	if !strings.Contains(body, "9/10, high danger") || !strings.Contains(body, "first 200000 characters") {
+		t.Errorf("body %q", body)
 	}
 }

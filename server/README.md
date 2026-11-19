@@ -107,6 +107,7 @@ never_automatic:
 classification:
   model: anthropic/claude-sonnet-4.5
   ci: true
+  comment: true
 ```
 
 - `version` must be `1`. The server rejects unknown keys.
@@ -124,6 +125,7 @@ classification:
 - `classification` is optional. If you set it, `model` is required.
 - `classification.model` is the OpenRouter model for every classification of the repository. A click on "Classify" in the app uses this model instead of the model of the user, and the stored classification names this model. If the rules file is missing or not valid, the app uses the model of the user.
 - `classification.ci: true` tells the server to read the score of the Sheepdog workflow for each PR. See [Classification in CI](#classification-in-ci).
+- `classification.comment: true` tells the Sheepdog workflow to post the score as a comment on the PR. The default is `false`. See [Comment on the PR](#comment-on-the-pr).
 
 Each row has notes that explain its lane. For a PR in an `approve-and-automerge` lane, the notes list the conditions that matched. For every other PR, the notes list the conditions that failed in the closest `approve-and-automerge` lane, for example `Needs a classification of the current commit`.
 
@@ -187,6 +189,20 @@ jobs:
         with:
           openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
+
+### Comment on the PR
+
+With `classification.comment: true` on the base branch, the command also posts the score as a comment on the PR after it prints the annotation. It keeps one comment for each PR. The comment starts with `<!-- sheepdog-classification -->`, and on the next commit the command edits its own comment from `github-actions[bot]` and posts no new one. The comment shows the score, a short danger label, the reason of the model as a quote, the model, and the commit. The command breaks `@` mentions in the reason, so that the text of the model cannot notify people.
+
+The comment needs write access to pull requests. Change the permissions of the workflow to:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+```
+
+If the command cannot post the comment, it prints a warning, and the job still passes, because the score is already in the annotation. The server never reads the comment. Anyone can write a comment, so only the annotation counts for the lanes.
 
 Add `OPENROUTER_API_KEY` as an Actions secret of the repository. Workflows that a Dependabot PR starts get only Dependabot secrets, so add the key also as a Dependabot secret. The owner of the key pays for the OpenRouter requests. Everyone who can read the repository can see the score in the check of the PR.
 

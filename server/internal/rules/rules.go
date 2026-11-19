@@ -29,9 +29,11 @@ type Rules struct {
 }
 
 // ClassificationRule fixes the model of every classification of the repository. CI tells the server to read the score of the Sheepdog workflow.
+// Comment tells the Sheepdog workflow to post the score as a comment on the pull request.
 type ClassificationRule struct {
-	Model string
-	CI    bool
+	Model   string
+	CI      bool
+	Comment bool
 }
 
 // LaneRule is one lane of the file. A nil pointer or an empty list sets no condition.
@@ -91,8 +93,9 @@ type neverAutomatic struct {
 }
 
 type classification struct {
-	Model string `yaml:"model"`
-	CI    bool   `yaml:"ci"`
+	Model   string `yaml:"model"`
+	CI      bool   `yaml:"ci"`
+	Comment bool   `yaml:"comment"`
 }
 
 // Parse reads and validates the content of .github/sheepdog.yml. The lanes keep the order of the file.
@@ -117,10 +120,12 @@ func Parse(data []byte) (Rules, error) {
 		switch {
 		case strings.TrimSpace(c.Model) == "" && c.CI:
 			return Rules{}, errors.New("classification.ci needs a classification.model")
+		case strings.TrimSpace(c.Model) == "" && c.Comment:
+			return Rules{}, errors.New("classification.comment needs a classification.model")
 		case strings.TrimSpace(c.Model) == "":
 			return Rules{}, errors.New("classification.model must not be empty")
 		}
-		rules.Classification = ClassificationRule{Model: c.Model, CI: c.CI}
+		rules.Classification = ClassificationRule{Model: c.Model, CI: c.CI, Comment: c.Comment}
 	}
 
 	node := &file.Lanes
