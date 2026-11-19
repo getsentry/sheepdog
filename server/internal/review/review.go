@@ -54,7 +54,7 @@ type Finding struct {
 
 // LoadInput loads the PR, its diff, and AGENTS.md from the base branch, so that a PR cannot change its own instructions.
 func LoadInput(ctx context.Context, gh *github.Client, repo string, number int) (github.PRDetail, Input, error) {
-	detail, err := gh.PullRequest(ctx, repo, number)
+	detail, err := gh.PullRequestInput(ctx, repo, number)
 	if err != nil {
 		return github.PRDetail{}, Input{}, err
 	}

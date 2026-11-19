@@ -306,6 +306,43 @@ func (c *Client) PullRequest(ctx context.Context, repo string, number int) (PRDe
 	return toDetail(data)
 }
 
+// The GITHUB_TOKEN of a CI job with contents and pull-requests read access cannot read team reviewers or checks, so the
+// classification input reads only the fields that it needs.
+const pullRequestInputQuery = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { title body headRefName baseRefName headRefOid updatedAt }
+  }
+}`
+
+// PullRequestInput returns a PRDetail with only Title, Body, HeadRefName, BaseRefName, HeadRefOid, and UpdatedAt.
+func (c *Client) PullRequestInput(ctx context.Context, repo string, number int) (PRDetail, error) {
+	if err := ValidRepo(repo); err != nil {
+		return PRDetail{}, err
+	}
+	owner, name, _ := strings.Cut(repo, "/")
+	var data struct {
+		Repository struct {
+			PullRequest *struct {
+				Title       string    `json:"title"`
+				Body        string    `json:"body"`
+				HeadRefName string    `json:"headRefName"`
+				BaseRefName string    `json:"baseRefName"`
+				HeadRefOid  string    `json:"headRefOid"`
+				UpdatedAt   time.Time `json:"updatedAt"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+	if err := c.graphql(ctx, pullRequestInputQuery, map[string]any{"owner": owner, "name": name, "number": number}, &data); err != nil {
+		return PRDetail{}, err
+	}
+	pr := data.Repository.PullRequest
+	if pr == nil {
+		return PRDetail{}, &Error{Status: http.StatusNotFound, Message: "GitHub: the pull request does not exist"}
+	}
+	return PRDetail{Title: pr.Title, Body: pr.Body, HeadRefName: pr.HeadRefName, BaseRefName: pr.BaseRefName, HeadRefOid: pr.HeadRefOid, UpdatedAt: pr.UpdatedAt}, nil
+}
+
 func (c *Client) Diff(ctx context.Context, repo string, number int) (string, error) {
 	if err := ValidRepo(repo); err != nil {
 		return "", err

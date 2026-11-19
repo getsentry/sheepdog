@@ -232,6 +232,31 @@ func TestPullRequestDetail(t *testing.T) {
 	}
 }
 
+func TestPullRequestInputReadsOnlyWhatACIJobCanRead(t *testing.T) {
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		req := readGraphQL(t, r)
+		for _, field := range []string{"Team", "reviewRequests", "statusCheckRollup", "latestReviews", "labels"} {
+			if strings.Contains(req.Query, field) {
+				t.Errorf("the input query reads %s, which a CI token with contents and pull-requests read cannot read", field)
+			}
+		}
+		io.WriteString(w, `{"data":{"repository":{"pullRequest":{"title":"Bump react","body":"b","headRefName":"dep","baseRefName":"main","headRefOid":"abc","updatedAt":"2026-11-19T14:00:00Z"}}}}`)
+	})
+	detail, err := client.PullRequestInput(context.Background(), "acme/app", 1)
+	if err != nil || detail.Title != "Bump react" || detail.BaseRefName != "main" || detail.HeadRefOid != "abc" || detail.UpdatedAt.IsZero() {
+		t.Fatalf("got %+v, %v", detail, err)
+	}
+}
+
+func TestPullRequestInputOfMissingPR(t *testing.T) {
+	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"data":{"repository":{"pullRequest":null}}}`)
+	})
+	if _, err := client.PullRequestInput(context.Background(), "acme/app", 1); err == nil {
+		t.Fatal("no error for a missing PR")
+	}
+}
+
 func TestPullRequestWithoutChecksOrDecision(t *testing.T) {
 	client := fakeGitHub(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":{"repository":{"pullRequest":{
