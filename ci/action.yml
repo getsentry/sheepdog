@@ -10,15 +10,19 @@ inputs:
 runs:
   using: composite
   steps:
-    # setup-go refuses paths with "..", so resolve the server directory first.
+    # setup-go refuses paths with "..", and it hashes cache files only inside the workspace.
+    # The job checks out nothing, so a copy of go.sum in the workspace is safe.
     - name: Find the Sheepdog source
       id: source
       shell: bash
-      run: echo "server=$(cd "$GITHUB_ACTION_PATH/../server" && pwd)" >> "$GITHUB_OUTPUT"
+      run: |
+        server="$(cd "$GITHUB_ACTION_PATH/../server" && pwd)"
+        cp "$server/go.sum" "$GITHUB_WORKSPACE/.sheepdog-go.sum"
+        echo "server=$server" >> "$GITHUB_OUTPUT"
     - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version-file: ${{ steps.source.outputs.server }}/go.mod
-        cache-dependency-path: ${{ steps.source.outputs.server }}/go.sum
+        cache-dependency-path: .sheepdog-go.sum
     - name: Build Sheepdog
       shell: bash
       working-directory: ${{ steps.source.outputs.server }}
