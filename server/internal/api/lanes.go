@@ -17,7 +17,17 @@ import (
 // Row is a review request with its lane. A repository without a valid rules file gives rows without a lane.
 type Row struct {
 	github.Row
-	Lane *Lane `json:"lane,omitempty"`
+	Lane           *Lane             `json:"lane,omitempty"`
+	Classification *CIClassification `json:"classification,omitempty"`
+}
+
+// CIClassification is the score of the Sheepdog workflow for the head commit of a row.
+type CIClassification struct {
+	Source  string `json:"source"`
+	Score   int    `json:"score"`
+	Reason  string `json:"reason"`
+	Model   string `json:"model"`
+	HeadSHA string `json:"headSha"`
 }
 
 type Lane struct {
@@ -44,6 +54,7 @@ func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user 
 	result := Requests{Rows: make([]Row, 0, len(rows)), Lanes: []string{}}
 	rulesByBase := map[string]*rules.Rules{}
 	var problems []string
+	var ciNumbers []int
 	for _, row := range rows {
 		laneRules, read := rulesByBase[row.BaseRef]
 		if !read {
@@ -63,9 +74,24 @@ func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user 
 				}
 			}
 		}
+		if laneRules != nil && laneRules.Classification.CI {
+			ciNumbers = append(ciNumbers, row.Number)
+		}
+	}
+	ci, err := client.CIClassifications(ctx, user.Repo, ciNumbers)
+	if err != nil {
+		return Requests{}, err
+	}
+
+	for _, row := range rows {
 		out := Row{Row: row}
-		if laneRules != nil {
-			lane := rules.Evaluate(*laneRules, lanePR(row), classifications[row.Number])
+		if laneRules := rulesByBase[row.BaseRef]; laneRules != nil {
+			classification := classifications[row.Number]
+			if found, ok := ci[row.Number]; ok && found.HeadSHA == row.HeadSHA {
+				out.Classification = &CIClassification{Source: "ci", Score: found.Score, Reason: found.Reason, Model: found.Model, HeadSHA: found.HeadSHA}
+				classification = &rules.Classification{HeadSHA: found.HeadSHA, Score: found.Score}
+			}
+			lane := rules.Evaluate(*laneRules, lanePR(row), classification)
 			out.Lane = &Lane{Name: lane.Name, Action: lane.Action, Notes: lane.Notes}
 		}
 		result.Rows = append(result.Rows, out)
@@ -161,6 +187,16 @@ func (s *Server) approveAndMerge(w http.ResponseWriter, r *http.Request, user st
 	} else if !errors.Is(err, store.ErrNotFound) {
 		internalError(w, err)
 		return
+	}
+	if laneRules.Classification.CI {
+		ci, err := client.CIClassifications(ctx, repo, []int{number})
+		if err != nil {
+			githubError(w, err)
+			return
+		}
+		if found, ok := ci[number]; ok && found.HeadSHA == pr.HeadSHA {
+			classification = &rules.Classification{HeadSHA: found.HeadSHA, Score: found.Score}
+		}
 	}
 	lane := rules.Evaluate(*laneRules, lanePR(pr.Row), classification)
 	if lane.Action != rules.ActionApproveAndAutomerge {

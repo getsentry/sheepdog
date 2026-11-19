@@ -18,13 +18,26 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "sheepdog:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(args []string) error {
+	switch {
+	case len(args) == 0:
+		return serve()
+	case args[0] == "classify":
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		return classify(ctx, args[1:], os.Getenv, os.Stdout, config.DefaultOpenRouterURL)
+	default:
+		return fmt.Errorf("unknown command %q: run without arguments for the server, or run classify --pr <number>", args[0])
+	}
+}
+
+func serve() error {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		return err

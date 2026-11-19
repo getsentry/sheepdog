@@ -8,6 +8,7 @@ import (
 	"sheepdog/internal/github"
 	"sheepdog/internal/openrouter"
 	"sheepdog/internal/review"
+	"sheepdog/internal/rules"
 	"sheepdog/internal/store"
 )
 
@@ -60,11 +61,15 @@ func (w ClassifyWork) report(ctx context.Context, result store.Classification, e
 }
 
 func (w ClassifyWork) classify(ctx context.Context) (store.Classification, error) {
-	detail, input, err := prompt(ctx, w.GitHub, w.Repo, w.Number)
+	detail, input, err := review.LoadInput(ctx, w.GitHub, w.Repo, w.Number)
 	if err != nil {
 		return store.Classification{}, err
 	}
-	result, truncated, err := review.Classify(ctx, w.OpenRouter, w.Model, input)
+	model, err := w.model(ctx, detail.BaseRefName)
+	if err != nil {
+		return store.Classification{}, err
+	}
+	result, truncated, err := review.Classify(ctx, w.OpenRouter, model, input)
 	if err != nil {
 		return store.Classification{}, err
 	}
@@ -72,7 +77,7 @@ func (w ClassifyWork) classify(ctx context.Context) (store.Classification, error
 		Repo:           w.Repo,
 		Number:         w.Number,
 		HeadSHA:        detail.HeadRefOid,
-		Model:          w.Model,
+		Model:          model,
 		Classification: result,
 		DiffTruncated:  truncated,
 		PRUpdatedAt:    detail.UpdatedAt,
@@ -81,4 +86,18 @@ func (w ClassifyWork) classify(ctx context.Context) (store.Classification, error
 		return store.Classification{}, err
 	}
 	return stored, nil
+}
+
+// model returns classification.model of the rules on the base branch, so that every user gets a score from the same model.
+// A missing or invalid rules file keeps the model of the user.
+func (w ClassifyWork) model(ctx context.Context, base string) (string, error) {
+	text, err := w.GitHub.RulesFile(ctx, w.Repo, base)
+	if err != nil || text == nil {
+		return w.Model, err
+	}
+	parsed, err := rules.Parse([]byte(*text))
+	if err != nil || parsed.Classification.Model == "" {
+		return w.Model, nil
+	}
+	return parsed.Classification.Model, nil
 }

@@ -276,3 +276,39 @@ func TestClassificationAndReviewRunTogether(t *testing.T) {
 		t.Errorf("tasks %+v, want a review and a classification", list)
 	}
 }
+
+func TestRepositoryModelOverridesUserModel(t *testing.T) {
+	h := newHarness(t, nil)
+	alice := h.signIn(aliceToken)
+	h.settings(alice, map[string]string{"openRouterKey": aliceKey, "model": "alice/model"})
+	events := h.events(alice)
+	var list []tasks.Task
+	events.expect("tasks", &list)
+	classify := func() *store.Classification {
+		t.Helper()
+		h.json("POST", classificationPath, alice, nil, http.StatusAccepted, nil)
+		events.expect("tasks", &list)
+		var done tasks.ClassificationEvent
+		events.expect("classification", &done)
+		events.expect("tasks", &list)
+		if done.Classification == nil {
+			t.Fatalf("classification failed: %s", done.Error)
+		}
+		return done.Classification
+	}
+
+	h.github.setRules("getsentry/sentry-cocoa@main", "version: 1\nclassification:\n  model: repo/model\n")
+	if c := classify(); c.Model != "repo/model" || !strings.Contains(h.openrouter.lastBody(), `"model":"repo/model"`) {
+		t.Errorf("classification with the repository model: %+v", c)
+	}
+	var stored store.Classification
+	h.json("GET", classificationPath, alice, nil, http.StatusOK, &stored)
+	if stored.Model != "repo/model" {
+		t.Errorf("stored model %q", stored.Model)
+	}
+
+	h.github.setRules("getsentry/sentry-cocoa@main", "version: 2\nclassification:\n  model: repo/model\n")
+	if c := classify(); c.Model != "alice/model" || !strings.Contains(h.openrouter.lastBody(), `"model":"alice/model"`) {
+		t.Errorf("classification with invalid rules: %+v", c)
+	}
+}

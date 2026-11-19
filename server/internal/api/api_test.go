@@ -72,6 +72,9 @@ type fakeGitHub struct {
 	writes      []string
 	mergeReads  int
 	failApprove string
+	// ciQueries counts the GraphQL queries that read check suites, and searches keeps the search queries.
+	ciQueries int
+	searches  []string
 }
 
 func (f *fakeGitHub) repoListCount(token string) int {
@@ -141,9 +144,12 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	switch {
+	case strings.Contains(req.Query, "checkSuites"):
+		f.serveCI(w, id, req.Query)
 	case strings.Contains(req.Query, "search("):
 		f.mu.Lock()
 		f.polls[token]++
+		f.searches = append(f.searches, req.Query)
 		f.mu.Unlock()
 		nodes := ""
 		if q, _ := req.Variables["q"].(string); strings.Contains(q, "repo:getsentry/"+id.login+"-repo ") {

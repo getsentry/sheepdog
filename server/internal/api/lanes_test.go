@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,8 @@ type fakePull struct {
 	// mergeStates are the merge states of the PR reads of approve and merge in order. The last one repeats.
 	mergeStates         []string
 	autoMerge, noSquash bool
+	// ciSuites are the GitHub Actions check suites of the head commit.
+	ciSuites []any
 }
 
 func defaultPull() fakePull {
@@ -120,6 +123,32 @@ func (f *fakeGitHub) serveMergePR(w http.ResponseWriter, id identity, variables 
 	f.mu.Unlock()
 	fmt.Fprintf(w, `{"data":{"repository":{"autoMergeAllowed":%t,"squashMergeAllowed":%t,"mergeCommitAllowed":true,"rebaseMergeAllowed":true,"pullRequest":%s}}}`,
 		p.autoMerge, !p.noSquash, f.pullNode(id, state))
+}
+
+func (f *fakeGitHub) serveCI(w http.ResponseWriter, id identity, query string) {
+	f.mu.Lock()
+	f.ciQueries++
+	p := f.pull
+	f.mu.Unlock()
+	repository := map[string]any{}
+	if alias := fmt.Sprintf("pr%d", id.number); strings.Contains(query, alias+": pullRequest(number: "+strconv.Itoa(id.number)+")") {
+		repository[alias] = map[string]any{
+			"headRefOid": p.headSHA,
+			"commits":    map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{"oid": p.headSHA, "checkSuites": map[string]any{"nodes": p.ciSuites}}}}},
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": repository}})
+}
+
+func ciSuite(event, path string, score int, headSHA string) map[string]any {
+	message := fmt.Sprintf(`{"score":%d,"reason":"Lock file only.","model":"repo/model","headSha":%q,"diffTruncated":false}`, score, headSHA)
+	return map[string]any{
+		"workflowRun": map[string]any{"event": event, "file": map[string]string{"path": path}},
+		"checkRuns": map[string]any{"nodes": []any{map[string]any{
+			"name":        "Sheepdog classification",
+			"annotations": map[string]any{"nodes": []any{map[string]string{"title": "sheepdog-classification", "message": message}}},
+		}}},
+	}
 }
 
 func (f *fakeGitHub) serveWrite(w http.ResponseWriter, r *http.Request, login string) {
@@ -413,4 +442,89 @@ func authorType(login string) string {
 		return "Bot"
 	}
 	return "User"
+}
+
+const ciRules = laneRules + "classification:\n  model: repo/model\n  ci: true\n"
+
+func TestCIScoreSetsLane(t *testing.T) {
+	h, alice := laneHarness(t)
+	h.github.setRules(aliceRepo+"@main", ciRules)
+	if got := h.repoll(alice, "alice"); got.Rows[0].Classification != nil || got.Rows[0].Lane.Name != "quick_look" {
+		t.Errorf("row without a CI score %+v", got.Rows[0])
+	}
+
+	h.github.setPull(func(p *fakePull) {
+		p.ciSuites = []any{ciSuite("pull_request_target", ".github/workflows/sheepdog.yml", 1, "sha-1")}
+	})
+	h.classify("alice", aliceRepo, 101, "sha-1", 9)
+	got := h.repoll(alice, "alice")
+	want := CIClassification{Source: "ci", Score: 1, Reason: "Lock file only.", Model: "repo/model", HeadSHA: "sha-1"}
+	if c := got.Rows[0].Classification; c == nil || *c != want {
+		t.Errorf("CI score %+v, want %+v", c, want)
+	}
+	if lane := got.Rows[0].Lane; lane.Name != "safe" || !slices.Contains(lane.Notes, "Score 1") {
+		t.Errorf("the CI score does not win over the app score: %+v", lane)
+	}
+	_, data := h.do("GET", "/api/review-requests", alice, nil)
+	if !strings.Contains(string(data), `"classification":{"source":"ci","score":1,"reason":"Lock file only.","model":"repo/model","headSha":"sha-1"}`) {
+		t.Errorf("row JSON %s", data)
+	}
+
+	h.github.setPull(func(p *fakePull) {
+		p.ciSuites = []any{ciSuite("pull_request", ".github/workflows/sheepdog.yml", 1, "sha-1")}
+	})
+	got = h.repoll(alice, "alice")
+	if got.Rows[0].Classification != nil || !slices.Contains(got.Rows[0].Lane.Notes, "Score 9, more than 2") {
+		t.Errorf("a score from the event pull_request counts: %+v %+v", got.Rows[0].Classification, got.Rows[0].Lane)
+	}
+
+	h.github.setPull(func(p *fakePull) {
+		p.headSHA = "sha-2"
+		p.ciSuites = []any{ciSuite("pull_request_target", ".github/workflows/sheepdog.yml", 1, "sha-1")}
+	})
+	got = h.repoll(alice, "alice")
+	if got.Rows[0].Classification != nil || got.Rows[0].Lane.Name != "quick_look" {
+		t.Errorf("a CI score of an older commit counts: %+v %+v", got.Rows[0].Classification, got.Rows[0].Lane)
+	}
+}
+
+func TestPollWithoutCIReadsNoCheckSuites(t *testing.T) {
+	h, alice := laneHarness(t)
+	h.github.setRules(aliceRepo+"@main", laneRules+"classification:\n  model: repo/model\n")
+	h.github.setPull(func(p *fakePull) {
+		p.ciSuites = []any{ciSuite("pull_request_target", ".github/workflows/sheepdog.yml", 1, "sha-1")}
+	})
+	got := h.repoll(alice, "alice")
+	if got.Rows[0].Classification != nil || got.Rows[0].Lane.Name != "quick_look" {
+		t.Errorf("a CI score counts without ci: true: %+v", got.Rows[0])
+	}
+	h.github.mu.Lock()
+	defer h.github.mu.Unlock()
+	if h.github.ciQueries != 0 {
+		t.Errorf("%d queries read check suites without ci: true", h.github.ciQueries)
+	}
+	for _, query := range h.github.searches {
+		if strings.Contains(query, "checkSuites") {
+			t.Errorf("the search query reads check suites:\n%s", query)
+		}
+	}
+}
+
+func TestApproveAndMergeUsesCIScore(t *testing.T) {
+	h, alice := laneHarness(t)
+	h.github.setRules(aliceRepo+"@main", ciRules)
+	h.github.setPull(func(p *fakePull) {
+		p.ciSuites = []any{ciSuite("pull_request_target", ".github/workflows/other.yml", 1, "sha-1")}
+	})
+	body := map[string]string{"headSha": "sha-1"}
+	h.wantError("POST", approvePath, alice, body, http.StatusConflict, "The lane quick_look does not allow approve and merge: Needs a classification of the current commit")
+
+	h.github.setPull(func(p *fakePull) {
+		p.ciSuites = []any{ciSuite("pull_request_target", ".github/workflows/sheepdog.yml", 1, "sha-1")}
+	})
+	var result map[string]string
+	h.json("POST", approvePath, alice, body, http.StatusOK, &result)
+	if result["result"] != "merged" {
+		t.Errorf("result %v", result)
+	}
 }

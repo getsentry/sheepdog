@@ -104,6 +104,9 @@ lanes:
     add_labels: [ready-to-merge]
 never_automatic:
   paths: [".github/**", "src/sentry.ts"]
+classification:
+  model: anthropic/claude-sonnet-4.5
+  ci: true
 ```
 
 - `version` must be `1`. The server rejects unknown keys.
@@ -112,18 +115,21 @@ never_automatic:
 - `authors` matches the login of the PR author. Upper and lower case are the same. An entry that ends with `[bot]`, for example `dependabot[bot]`, matches only a GitHub App author with that name, so that a person with the login `dependabot` does not match. An entry without `[bot]` matches any author with that login. In YAML, write an entry with `[bot]` in quotes.
 - `paths` matches when every changed file matches one of the globs. `**` matches any number of directories.
 - `max_changed_lines` is the highest number of added plus deleted lines.
-- `max_score` is the highest classification score. Only a classification of the current head commit counts. The server does not classify by itself. Click "Classify" in the app.
+- `max_score` is the highest classification score. Only a classification of the current head commit counts. The server does not classify by itself. Click "Classify" in the app, or classify in CI. See [Classification in CI](#classification-in-ci).
 - `no_major_bumps: true` matches a title like `Bump expo from 57.0.1 to 57.2.0`, where the first number of both versions is the same. A title without this form does not match.
 - `require_checks: true` matches when all checks of the head commit passed. A PR without checks does not match.
 - `action` is `suggest` (the default) or `approve-and-automerge`.
 - `add_labels` are the labels that "approve and merge" adds before it approves.
 - `never_automatic.paths` puts a PR in `manual` when one changed file matches one of the globs. A PR with more than 100 changed files is also in `manual`.
+- `classification` is optional. If you set it, `model` is required.
+- `classification.model` is the OpenRouter model for every classification of the repository. A click on "Classify" in the app uses this model instead of the model of the user, and the stored classification names this model. If the rules file is missing or not valid, the app uses the model of the user.
+- `classification.ci: true` tells the server to read the score of the Sheepdog workflow for each PR. See [Classification in CI](#classification-in-ci).
 
 Each row has notes that explain its lane. For a PR in an `approve-and-automerge` lane, the notes list the conditions that matched. For every other PR, the notes list the conditions that failed in the closest `approve-and-automerge` lane, for example `Needs a classification of the current commit`.
 
 After a classification is stored, the server checks GitHub again at once, so the lane changes without a wait of 30 seconds.
 
-`POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge` takes `{"headSha"}`, the head commit that the user saw. The server reads the PR, the rules, and the classification again, and does these steps:
+`POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge` takes `{"headSha"}`, the head commit that the user saw. The server reads the PR, the rules, and the classification again. With `classification.ci: true`, it also reads the CI score again. Then it does these steps:
 
 1. It returns 404 if the PR is not in the last list of review requests of the user.
 2. It returns 409 if the head commit is not `headSha`, if the rules file is missing or not valid, or if the PR is not in an `approve-and-automerge` lane. The error text names the reason. The server changes nothing on GitHub in these cases.
@@ -132,6 +138,66 @@ After a classification is stored, the server checks GitHub again at once, so the
 5. It returns `{"result": "merged"}` or `{"result": "auto-merge"}`, and checks GitHub again at once.
 
 A GitHub error, for example for an approval of your own PR, gives status 502 with the GitHub text.
+
+## Classification in CI
+
+A repository can classify every PR in GitHub Actions. Then the score is ready without a click, and every user sees a score from the same model. The model is `classification.model` in `.github/sheepdog.yml`.
+
+The command `sheepdog classify --pr <number>` classifies one PR. It reads these environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `GITHUB_TOKEN` | A token that can read the PR and the contents of the repository. |
+| `OPENROUTER_API_KEY` | The OpenRouter API key. |
+| `GITHUB_REPOSITORY` | The repository, for example `getsentry/sentry-react-native`. GitHub Actions sets it. |
+| `GITHUB_API_URL` | Optional. The GitHub API address. GitHub Actions sets it. The default is `https://api.github.com`. |
+| `GITHUB_STEP_SUMMARY` | Optional. GitHub Actions sets it. The command adds a short Markdown summary of the score to this file. |
+
+The command does not read the server configuration. It reads `.github/sheepdog.yml` and `AGENTS.md` from the base branch of the PR, and it classifies the current head commit with `classification.model`. If the rules file is missing, is not valid, or has no `classification.model`, the command stops with a message. On success, it prints one line:
+
+```text
+::notice title=sheepdog-classification::{"score":2,"reason":"...","model":"...","headSha":"...","diffTruncated":false}
+```
+
+GitHub reads this line as a workflow command and adds a notice annotation to the job. The command writes `%`, CR, and LF in the JSON as `%25`, `%0D`, and `%0A`, as GitHub requires. On an error, the command stops with exit code 1 and prints the error. It never prints the token or the key.
+
+The composite action `getsentry/sheepdog/ci` builds `sheepdog` from its own source and runs the command for the PR of the event. It has two inputs:
+
+- `openrouter-api-key` is required.
+- `github-token` is optional. The default is the token of the workflow run.
+
+The action does not check out the code of the PR. Add this workflow to the repository as `.github/workflows/sheepdog.yml`. The server trusts no other file name. Replace `<commit>` with a full commit SHA of `getsentry/sheepdog`.
+
+```yaml
+name: Sheepdog
+on:
+  pull_request_target:
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: sheepdog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  classify:
+    name: Sheepdog classification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: getsentry/sheepdog/ci@<commit>
+        with:
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+Add `OPENROUTER_API_KEY` as an Actions secret of the repository. Workflows that a Dependabot PR starts get only Dependabot secrets, so add the key also as a Dependabot secret. The owner of the key pays for the OpenRouter requests. Everyone who can read the repository can see the score in the check of the PR.
+
+GitHub runs a `pull_request_target` workflow from the base branch, so a PR cannot change the workflow or the version of the action. With `classification.ci: true` on the base branch, the server reads the GitHub Actions check suites of the head commit of each PR at each poll. It uses a score only when all of these conditions are true:
+
+1. The check run has the name `Sheepdog classification`.
+2. The workflow run has the event `pull_request_target` and the file `.github/workflows/sheepdog.yml`.
+3. The annotation has the title `sheepdog-classification` and valid JSON with a score from 1 to 10.
+4. The `headSha` of the annotation is the current head commit of the PR.
+
+For the lanes, the server uses the CI score of the head commit. If there is no CI score, it uses the stored app classification of the head commit. Without `classification.ci: true`, the server does not read check suites.
 
 ## API
 
@@ -150,7 +216,7 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, and `hasOpenRouterKey`. `PUT` also takes `openRouterKey`. An empty key deletes it. |
 | `GET /api/repos` | The repositories of the user. |
 | `GET /api/models` | The OpenRouter models that support structured outputs. |
-| `GET /api/review-requests` | The result of the last check of the selected repository: `repo`, `fetchedAt`, `rows`, `lanes`, and the optional `error` and `rulesError`. Each row has `headSha`, and a `lane` with `name`, `action`, and `notes` when the repository has a valid rules file. `lanes` lists the lane names in file order, without `manual`. `rulesError` explains why the rules file is not valid. |
+| `GET /api/review-requests` | The result of the last check of the selected repository: `repo`, `fetchedAt`, `rows`, `lanes`, and the optional `error` and `rulesError`. Each row has `headSha`, and a `lane` with `name`, `action`, and `notes` when the repository has a valid rules file. A row with a CI score has `classification` with `source` (always `ci`), `score`, `reason`, `model`, and `headSha`. `lanes` lists the lane names in file order, without `manual`. `rulesError` explains why the rules file is not valid. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}` | The details of a PR. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/review` | The latest stored AI review of the PR, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |

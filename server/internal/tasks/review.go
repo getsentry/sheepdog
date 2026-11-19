@@ -63,34 +63,8 @@ func (w ReviewWork) report(ctx context.Context, result store.Review, err error) 
 	w.Publish(event)
 }
 
-// prompt loads the PR, its diff, and AGENTS.md from the base branch, so that a PR cannot change its own instructions.
-func prompt(ctx context.Context, gh *github.Client, repo string, number int) (github.PRDetail, review.Input, error) {
-	detail, err := gh.PullRequest(ctx, repo, number)
-	if err != nil {
-		return github.PRDetail{}, review.Input{}, err
-	}
-	diff, err := gh.Diff(ctx, repo, number)
-	if err != nil {
-		return github.PRDetail{}, review.Input{}, err
-	}
-	agents, err := gh.AgentsFile(ctx, repo, detail.BaseRefName)
-	if err != nil {
-		return github.PRDetail{}, review.Input{}, err
-	}
-	return detail, review.Input{
-		Repo:        repo,
-		Number:      number,
-		Title:       detail.Title,
-		BaseRefName: detail.BaseRefName,
-		HeadRefName: detail.HeadRefName,
-		Body:        detail.Body,
-		Agents:      agents,
-		Diff:        diff,
-	}, nil
-}
-
 func (w ReviewWork) review(ctx context.Context) (store.Review, error) {
-	detail, input, err := prompt(ctx, w.GitHub, w.Repo, w.Number)
+	detail, input, err := review.LoadInput(ctx, w.GitHub, w.Repo, w.Number)
 	if err != nil {
 		return store.Review{}, err
 	}

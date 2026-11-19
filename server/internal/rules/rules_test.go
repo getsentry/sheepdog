@@ -69,6 +69,22 @@ func TestParseDefaults(t *testing.T) {
 	}
 }
 
+func TestParseClassification(t *testing.T) {
+	cases := map[string]ClassificationRule{
+		"version: 1\n":                                             {},
+		"version: 1\nclassification:\n":                            {},
+		"version: 1\nclassification:\n  model: a/b\n":              {Model: "a/b"},
+		"version: 1\nclassification: {model: a/b, ci: true}\n":     {Model: "a/b", CI: true},
+		"version: 1\nclassification:\n  model: a/b\n  ci: false\n": {Model: "a/b"},
+	}
+	for data, want := range cases {
+		rules, err := Parse([]byte(data))
+		if err != nil || rules.Classification != want {
+			t.Errorf("%q: got %+v, %v, want %+v", data, rules.Classification, err, want)
+		}
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	cases := []struct {
 		name, data, want string
@@ -88,6 +104,11 @@ func TestParseErrors(t *testing.T) {
 		{"invalid lane glob", "version: 1\nlanes:\n  docs:\n    paths: [\"docs/[a\"]\n", `lane "docs": paths: invalid glob "docs/[a"`},
 		{"invalid never glob", "version: 1\nnever_automatic:\n  paths: [\"{a\"]\n", `never_automatic.paths: invalid glob "{a"`},
 		{"empty glob", "version: 1\nnever_automatic:\n  paths: [\"\"]\n", `invalid glob ""`},
+		{"unknown classification key", "version: 1\nclassification:\n  model: a/b\n  models: [c]\n", `field models not found`},
+		{"empty model", "version: 1\nclassification:\n  model: \" \"\n", "classification.model must not be empty"},
+		{"classification without model", "version: 1\nclassification: {}\n", "classification.model must not be empty"},
+		{"ci without model", "version: 1\nclassification:\n  ci: true\n", "classification.ci needs a classification.model"},
+		{"ci not a bool", "version: 1\nclassification:\n  model: a/b\n  ci: maybe\n", "cannot unmarshal"},
 		{"unquoted bracket in a flow list", "version: 1\nlanes:\n  safe:\n    authors: [dependabot[bot]]\n", `did not find expected ',' or ']'`},
 	}
 	for _, c := range cases {

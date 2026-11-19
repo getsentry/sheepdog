@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+const (
+	DefaultGitHubURL     = "https://api.github.com"
+	DefaultOpenRouterURL = "https://openrouter.ai/api/v1"
+)
+
 type Config struct {
 	Addr          string
 	DBPath        string
@@ -21,8 +26,8 @@ func Load(getenv func(string) string) (Config, error) {
 		Addr:          getenv("SHEEPDOG_ADDR"),
 		DBPath:        getenv("SHEEPDOG_DB"),
 		AllowedLogins: map[string]bool{},
-		GitHubURL:     "https://api.github.com",
-		OpenRouterURL: "https://openrouter.ai/api/v1",
+		GitHubURL:     DefaultGitHubURL,
+		OpenRouterURL: DefaultOpenRouterURL,
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = "127.0.0.1:8080"

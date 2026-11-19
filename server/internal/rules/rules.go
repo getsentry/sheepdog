@@ -25,6 +25,13 @@ const (
 type Rules struct {
 	Lanes          []LaneRule
 	NeverAutomatic []string
+	Classification ClassificationRule
+}
+
+// ClassificationRule fixes the model of every classification of the repository. CI tells the server to read the score of the Sheepdog workflow.
+type ClassificationRule struct {
+	Model string
+	CI    bool
 }
 
 // LaneRule is one lane of the file. A nil pointer or an empty list sets no condition.
@@ -73,13 +80,19 @@ var laneKeys = map[string]bool{
 
 // Named types keep the unknown key errors of the decoder short.
 type sheepdogYAML struct {
-	Version        int            `yaml:"version"`
-	Lanes          yaml.Node      `yaml:"lanes"`
-	NeverAutomatic neverAutomatic `yaml:"never_automatic"`
+	Version        int             `yaml:"version"`
+	Lanes          yaml.Node       `yaml:"lanes"`
+	NeverAutomatic neverAutomatic  `yaml:"never_automatic"`
+	Classification *classification `yaml:"classification"`
 }
 
 type neverAutomatic struct {
 	Paths []string `yaml:"paths"`
+}
+
+type classification struct {
+	Model string `yaml:"model"`
+	CI    bool   `yaml:"ci"`
 }
 
 // Parse reads and validates the content of .github/sheepdog.yml. The lanes keep the order of the file.
@@ -100,6 +113,15 @@ func Parse(data []byte) (Rules, error) {
 		return Rules{}, err
 	}
 	rules := Rules{NeverAutomatic: file.NeverAutomatic.Paths}
+	if c := file.Classification; c != nil {
+		switch {
+		case strings.TrimSpace(c.Model) == "" && c.CI:
+			return Rules{}, errors.New("classification.ci needs a classification.model")
+		case strings.TrimSpace(c.Model) == "":
+			return Rules{}, errors.New("classification.model must not be empty")
+		}
+		rules.Classification = ClassificationRule{Model: c.Model, CI: c.CI}
+	}
 
 	node := &file.Lanes
 	if node.Kind == 0 || node.Tag == "!!null" {

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
+	"sheepdog/internal/github"
 	"sheepdog/internal/openrouter"
 )
 
@@ -49,6 +50,32 @@ type Finding struct {
 	File     string `json:"file"`
 	Title    string `json:"title"`
 	Detail   string `json:"detail"`
+}
+
+// LoadInput loads the PR, its diff, and AGENTS.md from the base branch, so that a PR cannot change its own instructions.
+func LoadInput(ctx context.Context, gh *github.Client, repo string, number int) (github.PRDetail, Input, error) {
+	detail, err := gh.PullRequest(ctx, repo, number)
+	if err != nil {
+		return github.PRDetail{}, Input{}, err
+	}
+	diff, err := gh.Diff(ctx, repo, number)
+	if err != nil {
+		return github.PRDetail{}, Input{}, err
+	}
+	agents, err := gh.AgentsFile(ctx, repo, detail.BaseRefName)
+	if err != nil {
+		return github.PRDetail{}, Input{}, err
+	}
+	return detail, Input{
+		Repo:        repo,
+		Number:      number,
+		Title:       detail.Title,
+		BaseRefName: detail.BaseRefName,
+		HeadRefName: detail.HeadRefName,
+		Body:        detail.Body,
+		Agents:      agents,
+		Diff:        diff,
+	}, nil
 }
 
 func UserPrompt(in Input) (text string, truncated bool) {
