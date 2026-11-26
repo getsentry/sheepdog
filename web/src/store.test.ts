@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { key } from './logic'
-import { createStore, currentRepo, isClassifying, isMerging, isReviewing, isSettingUp } from './store'
+import { createStore, currentRepo, isClassifying, isMerging, isReviewing, isSettingUp, isStarred } from './store'
 import { failure, fakeEventSources, fakeFetch, fakeTimers, Gate, reply, settle, type Reply, type Seen } from './test/fakes'
 import { laneRow, requests } from './test/rows'
 import { approveAndMergeAction, type Classification, type Review, type RunningTask } from './types'
 
 const notAllowed = 'This GitHub account is not allowed on this server'
 const badSession = 'The session is not valid. Sign in again'
-const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true }
+const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [] }
 
 const task: RunningTask = {
   id: 'T1',
@@ -361,14 +361,14 @@ describe('store', () => {
       if (owner === 'A' && method === 'PUT' && path === '/api/settings') {
         held += 1
         await gate.wait()
-        return reply(200, { repo: 'acme/old', model: '', hasOpenRouterKey: false })
+        return reply(200, { repo: 'acme/old', model: '', hasOpenRouterKey: false, starred: [] })
       }
       if (owner === 'A' && path === '/api/repos') {
         held += 1
         await gate.wait()
         return failure(401, badSession)
       }
-      if (owner === 'B' && path === '/api/settings') return reply(200, { repo: 'bob/new', model: '', hasOpenRouterKey: false })
+      if (owner === 'B' && path === '/api/settings') return reply(200, { repo: 'bob/new', model: '', hasOpenRouterKey: false, starred: [] })
     })
     const select = s.actions.selectRepo('acme/old')
     const repos = s.actions.loadRepositories()
@@ -604,6 +604,45 @@ describe('store', () => {
     expect(await template).toBeNull()
     expect(await setUp).toBeNull()
     expect(late.state().settingUp.size).toBe(0)
+  })
+
+  it('changes a star at once, sends one request for a double click, and keeps the answer of the server', async () => {
+    const gate = new Gate()
+    const s = await signedIn(async ({ method, path }) => {
+      if (path !== '/api/repos/acme/app/star') return undefined
+      await gate.wait()
+      return reply(200, { ...settings, starred: method === 'PUT' ? ['acme/app', 'acme/other-device'] : ['acme/other-device'] })
+    })
+    await settle()
+    const first = s.actions.toggleStar('ACME/App')
+    expect(isStarred(s.state(), 'acme/app')).toBe(true)
+    await s.actions.toggleStar('acme/app')
+    gate.open()
+    await first
+    expect(s.state().settings?.starred).toEqual(['acme/app', 'acme/other-device'])
+    expect(s.state().starring.size).toBe(0)
+    await s.actions.toggleStar('acme/app')
+    expect(s.state().settings?.starred).toEqual(['acme/other-device'])
+    expect(s.paths('/star').map((p) => p.method)).toEqual(['PUT', 'DELETE'])
+    expect(s.state().starError).toBeNull()
+  })
+
+  it('puts the star back with the error of the server', async () => {
+    const limit = 'You can star at most 200 repositories. Remove a star first'
+    const s = await signedIn(({ method, path }) => {
+      if (method === 'PUT' && path === '/api/repos/acme/new/star') return failure(409, limit)
+      if (method === 'DELETE' && path === '/api/repos/acme/old/star') return failure(500, 'Internal server error')
+      if (path === '/api/settings') return reply(200, { ...settings, starred: ['acme/old'] })
+      return undefined
+    })
+    await settle()
+    await s.actions.toggleStar('acme/new')
+    expect(s.state().settings?.starred).toEqual(['acme/old'])
+    expect(s.state().starError).toBe(limit)
+    await s.actions.toggleStar('acme/old')
+    expect(s.state().settings?.starred).toEqual(['acme/old'])
+    expect(s.state().starError).toBe('Internal server error')
+    expect(s.state().starring.size).toBe(0)
   })
 
   it('closes the open PR when the repository changes', async () => {

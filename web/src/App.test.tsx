@@ -57,7 +57,7 @@ async function signedIn(handler: (seen: Seen) => ReturnType<Parameters<typeof fa
       case 'GET /api/me':
         return reply(200, { login: 'alwx' })
       case 'GET /api/settings':
-        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true })
+        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [] })
       case 'GET /api/repos':
         return reply(200, ['acme/app'])
       case 'GET /api/models':
@@ -315,4 +315,64 @@ it('shows the errors of the server in the setup dialog', async () => {
   expect(within(dialog).queryByRole('link')).toBeNull()
   expect(screen.queryByRole('alert')).toBeNull()
   expect(sent('POST', setupPath)).toHaveLength(1)
+})
+
+it('shows the starred repositories first, also while searching, and a click on a star selects nothing', async () => {
+  let starred = ['acme/tools']
+  const { sent } = await signedIn((seen) => {
+    if (seen.path === '/api/repos') return reply(200, ['acme/app', 'Acme/Tools', 'acme/web', 'other/tooling'])
+    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred })
+    if (seen.path === '/api/repos/acme/web/star') {
+      starred = seen.method === 'PUT' ? ['acme/tools', 'acme/web'] : ['acme/tools']
+      return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred })
+    }
+  })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /acme\/app/ }))
+    await settle()
+  })
+  const picker = screen.getByRole('dialog', { name: 'Repositories' })
+  const list = () =>
+    within(picker)
+      .getAllByRole('listitem')
+      .map((item) => {
+        const [name, star] = within(item).getAllByRole('button')
+        return `${name.textContent} ${star.getAttribute('aria-label')}`
+      })
+  expect(list()).toEqual(['Acme/Tools Remove star', 'acme/app Star', 'acme/web Star', 'other/tooling Star'])
+
+  const web = within(picker).getAllByRole('listitem')[2]
+  await act(async () => {
+    fireEvent.click(within(web).getByRole('button', { name: 'Star' }))
+    await settle()
+  })
+  expect(list()).toEqual(['Acme/Tools Remove star', 'acme/web Remove star', 'acme/app Star', 'other/tooling Star'])
+  expect(screen.getByRole('dialog', { name: 'Repositories' })).toBe(picker)
+  expect(sent('PUT', '/api/settings')).toHaveLength(0)
+  expect(sent('PUT', '/api/repos/acme/web/star')).toHaveLength(1)
+
+  fireEvent.change(within(picker).getByRole('searchbox'), { target: { value: 'tool' } })
+  expect(list()).toEqual(['Acme/Tools Remove star', 'other/tooling Star'])
+  fireEvent.change(within(picker).getByRole('searchbox'), { target: { value: 'acme/' } })
+  expect(list()).toEqual(['Acme/Tools Remove star', 'acme/web Remove star', 'acme/app Star'])
+})
+
+it('shows a refused star in the picker, and puts it back', async () => {
+  const { sent } = await signedIn((seen) => {
+    if (seen.path === '/api/repos') return reply(200, ['acme/app', 'acme/web'])
+    if (seen.path === '/api/repos/acme/web/star') return failure(409, 'You can star at most 200 repositories. Remove a star first')
+  })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /acme\/app/ }))
+    await settle()
+  })
+  const picker = screen.getByRole('dialog', { name: 'Repositories' })
+  const web = within(picker).getAllByRole('listitem')[1]
+  await act(async () => {
+    fireEvent.click(within(web).getByRole('button', { name: 'Star' }))
+    await settle()
+  })
+  expect(within(picker).getByRole('alert').textContent).toBe('You can star at most 200 repositories. Remove a star first')
+  expect(within(picker).getAllByRole('button', { name: 'Star' })).toHaveLength(2)
+  expect(sent('PUT', '/api/repos/acme/web/star')).toHaveLength(1)
 })

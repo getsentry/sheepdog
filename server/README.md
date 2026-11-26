@@ -287,7 +287,9 @@ The browser sends the cookie by itself, so the server protects cookie requests a
 
 The routes under `/api/repos/{owner}/{name}/pulls/` and `/api/repos/{owner}/{name}/classifications` return 409 for a repository without `.github/sheepdog.yml` on its default branch.
 
-GitHub repository names ignore case. The server changes them to lower case, so settings, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
+The web app shows the starred repositories first in the repository picker. Sheepdog keeps the stars in its own database for each user, not on GitHub, because a star on GitHub is public and has another meaning. A star does not need `.github/sheepdog.yml`.
+
+GitHub repository names ignore case. The server changes them to lower case, so settings, stars, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
 
 A review or a classification sends at most 200,000 characters of the diff. The server counts Unicode code points, not bytes and not visible characters. GitHub responses can have at most 50 MB for a diff and 10 MB for other data, and OpenRouter responses at most 10 MB. A larger response gives an error.
 
@@ -297,8 +299,9 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `DELETE /api/session` | Sign out. Ends this session, closes its event streams, and deletes the session cookie. Returns 204. |
 | `DELETE /api/sessions` | Sign out on all devices. Ends every session of the user, closes all its event streams, and deletes the session cookie. Returns 204. |
 | `GET /api/me` | Returns `{"login"}`. |
-| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, and `hasOpenRouterKey`. `PUT` also takes `openRouterKey`. An empty key deletes it. |
+| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, and `starred`. `PUT` takes `repo`, `model`, and `openRouterKey`. An empty key deletes it. `starred` is the list of starred repositories in name order, and an empty list when there is none. |
 | `GET /api/repos` | The repositories of the user. |
+| `PUT /api/repos/{owner}/{name}/star`, `DELETE /api/repos/{owner}/{name}/star` | Add or remove a star of the repository. Returns the settings. A second `PUT` or `DELETE` changes nothing. A user can star at most 200 repositories. One more star gets status 409. |
 | `GET /api/models` | The OpenRouter models that support structured outputs. |
 | `GET /api/review-requests` | The result of the last check of the selected repository: `repo`, `fetchedAt`, `rows`, `lanes`, and the optional `error`, `rulesError`, and `setup`. `setup` is set only when the default branch has no rules file. See [Set up a repository](#set-up-a-repository). Each row has `headSha`, and a `lane` with `name`, `action`, and `notes` when the repository has a valid rules file. A row with a CI score has `classification` with `source` (always `ci`), `score`, `reason`, `model`, and `headSha`. `lanes` lists the lane names in file order, without `manual`. `rulesError` explains why the rules file is not valid. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}` | The details of a PR. |

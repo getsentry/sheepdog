@@ -16,6 +16,11 @@ import (
 
 var ErrNotFound = errors.New("store: not found")
 
+// MaxStars is the highest number of starred repositories of a user.
+const MaxStars = 200
+
+var ErrTooManyStars = errors.New("store: too many starred repositories")
+
 // SessionIdleTimeout is how long a session stays valid without a request.
 const SessionIdleTimeout = 30 * 24 * time.Hour
 
@@ -63,6 +68,11 @@ CREATE TABLE IF NOT EXISTS classifications (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS classifications_by_pr ON classifications(user_id, repo, number, created_at);
+CREATE TABLE IF NOT EXISTS starred_repos (
+	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	repo TEXT NOT NULL,
+	PRIMARY KEY (user_id, repo)
+);
 `
 
 type Store struct {
@@ -221,6 +231,52 @@ func (s *Store) UserIDsWithRepo(ctx context.Context) ([]int64, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// StarRepo adds a star. A repository that has a star keeps it, also at the limit.
+func (s *Store) StarRepo(ctx context.Context, userID int64, repo string) error {
+	// One statement counts and inserts, so that two requests at the same time cannot pass the limit.
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO starred_repos (user_id, repo)
+		SELECT ?1, ?2 WHERE (SELECT COUNT(*) FROM starred_repos WHERE user_id = ?1) < ?3
+		ON CONFLICT DO NOTHING`, userID, repo, MaxStars)
+	if err != nil {
+		return err
+	}
+	if added, err := result.RowsAffected(); err != nil || added == 1 {
+		return err
+	}
+	var starred bool
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) > 0 FROM starred_repos WHERE user_id = ? AND repo = ?`, userID, repo).Scan(&starred); err != nil {
+		return err
+	}
+	if !starred {
+		return ErrTooManyStars
+	}
+	return nil
+}
+
+func (s *Store) UnstarRepo(ctx context.Context, userID int64, repo string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM starred_repos WHERE user_id = ? AND repo = ?`, userID, repo)
+	return err
+}
+
+// StarredRepos returns the starred repositories of the user in name order. The list is empty, not nil, without stars.
+func (s *Store) StarredRepos(ctx context.Context, userID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT repo FROM starred_repos WHERE user_id = ? ORDER BY repo`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	repos := []string{}
+	for rows.Next() {
+		var repo string
+		if err := rows.Scan(&repo); err != nil {
+			return nil, err
+		}
+		repos = append(repos, repo)
+	}
+	return repos, rows.Err()
 }
 
 // CreateSession returns a new session token. The database keeps only its SHA-256 hash.

@@ -125,17 +125,23 @@ func (s *Server) me(w http.ResponseWriter, _ *http.Request, user store.User) {
 }
 
 type settingsResponse struct {
-	Repo             string `json:"repo"`
-	Model            string `json:"model"`
-	HasOpenRouterKey bool   `json:"hasOpenRouterKey"`
+	Repo             string   `json:"repo"`
+	Model            string   `json:"model"`
+	HasOpenRouterKey bool     `json:"hasOpenRouterKey"`
+	Starred          []string `json:"starred"`
 }
 
-func toSettings(user store.User) settingsResponse {
-	return settingsResponse{Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != ""}
+func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user store.User) {
+	starred, err := s.store.StarredRepos(r.Context(), user.ID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settingsResponse{Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred})
 }
 
-func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request, user store.User) {
-	writeJSON(w, http.StatusOK, toSettings(user))
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request, user store.User) {
+	s.writeSettings(w, r, user)
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -181,7 +187,30 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toSettings(updated))
+	s.writeSettings(w, r, updated)
+}
+
+// star adds a star for PUT and removes it for DELETE, and returns the settings. Stars need no rules file, because they are not PR work.
+func (s *Server) star(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, ok := repoPath(w, r)
+	if !ok {
+		return
+	}
+	var err error
+	if r.Method == http.MethodPut {
+		err = s.store.StarRepo(r.Context(), user.ID, repo)
+	} else {
+		err = s.store.UnstarRepo(r.Context(), user.ID, repo)
+	}
+	if errors.Is(err, store.ErrTooManyStars) {
+		writeError(w, http.StatusConflict, fmt.Sprintf("You can star at most %d repositories. Remove a star first", store.MaxStars))
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	s.writeSettings(w, r, user)
 }
 
 func (s *Server) repos(w http.ResponseWriter, r *http.Request, user store.User) {

@@ -27,6 +27,8 @@ export interface State {
   modelsError: string | null
   repositories: string[] | null
   repositoriesError: string | null
+  // The last failed star change in the repository picker.
+  starError: string | null
   // The last poll of the server. null until the event stream sends it.
   requests: Requests | null
   selection: number | null
@@ -46,6 +48,7 @@ export interface State {
   merging: ReadonlySet<string>
   // Keyed by the repository in lower case.
   settingUp: ReadonlySet<string>
+  starring: ReadonlySet<string>
 }
 
 type Field =
@@ -56,11 +59,12 @@ type Field =
   | 'modelsError'
   | 'repositories'
   | 'repositoriesError'
+  | 'starError'
   | 'selection'
   | 'connectionError'
   | 'error'
 
-type Pending = 'startingReviews' | 'startingClassifications' | 'merging' | 'settingUp'
+type Pending = 'startingReviews' | 'startingClassifications' | 'merging' | 'settingUp' | 'starring'
 
 export type Action =
   | { type: 'signedIn'; login: string }
@@ -70,6 +74,7 @@ export type Action =
   | { type: 'taskStarted'; task: RunningTask }
   | { type: 'taskCancelled'; id: string }
   | { type: 'pending'; set: Pending; key: string; on: boolean }
+  | { type: 'star'; repo: string; on: boolean }
   // A load keeps a newer result, and keeps an error that came while it ran.
   | { type: 'reviewLoaded'; key: string; review: Review | null; previousError: string | undefined }
   | { type: 'reviewError'; key: string; error: string | null }
@@ -93,6 +98,7 @@ export const initialState: State = {
   modelsError: null,
   repositories: null,
   repositoriesError: null,
+  starError: null,
   requests: null,
   selection: null,
   connectionError: null,
@@ -106,6 +112,7 @@ export const initialState: State = {
   startingClassifications: new Set(),
   merging: new Set(),
   settingUp: new Set(),
+  starring: new Set(),
 }
 
 export function currentRepo(state: State): string {
@@ -130,6 +137,10 @@ export function isMerging(state: State, repo: string, number: number): boolean {
 
 export function isSettingUp(state: State, repo: string): boolean {
   return state.settingUp.has(repo.toLowerCase())
+}
+
+export function isStarred(state: State, repo: string): boolean {
+  return state.settings?.starred.includes(repo.toLowerCase()) ?? false
 }
 
 function without<T>(record: Record<string, T>, k: string): Record<string, T> {
@@ -200,6 +211,12 @@ function update(state: State, action: Action): State {
       if (action.on) set.add(action.key)
       else set.delete(action.key)
       return { ...state, [action.set]: set }
+    }
+    case 'star': {
+      if (!state.settings) return state
+      const starred = state.settings.starred.filter((repo) => repo !== action.repo)
+      if (action.on) starred.push(action.repo)
+      return { ...state, settings: { ...state.settings, starred: starred.sort() } }
     }
     case 'reviewLoaded': {
       let next = state
@@ -495,6 +512,28 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
         if (!(error instanceof Cancelled)) set({ repositoriesError: message(error) })
       } finally {
         if (loadingRepositories === generation) loadingRepositories = null
+      }
+    },
+
+    // The star changes at once, and goes back when the server refuses. A second click before the answer sends nothing.
+    async toggleStar(repo: string) {
+      const k = repo.toLowerCase()
+      if (!state.settings || state.starring.has(k)) return
+      const on = !isStarred(state, k)
+      const generation = state.generation
+      set({ starError: null })
+      dispatch({ type: 'pending', set: 'starring', key: k, on: true })
+      dispatch({ type: 'star', repo: k, on })
+      try {
+        const settings = await checked((client) => (on ? client.star(k) : client.unstar(k)))
+        // The answer can miss a star that another running request changes.
+        if (state.starring.size === 1 && state.settings) set({ settings: { ...state.settings, starred: settings.starred } })
+      } catch (error) {
+        if (error instanceof Cancelled) return
+        dispatch({ type: 'star', repo: k, on: !on })
+        set({ starError: message(error) })
+      } finally {
+        if (generation === state.generation) dispatch({ type: 'pending', set: 'starring', key: k, on: false })
       }
     },
 

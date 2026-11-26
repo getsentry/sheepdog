@@ -17,6 +17,13 @@ export function time(text: string): number {
   return new Date(text).getTime()
 }
 
+// Starred repositories first, then the others, both in the order of the list. starred is in lower case.
+export function starredFirst(repositories: string[], starred: readonly string[]): string[] {
+  const stars = new Set(starred)
+  const isStarred = (repo: string) => stars.has(repo.toLowerCase())
+  return [...repositories.filter(isStarred), ...repositories.filter((repo) => !isStarred(repo))]
+}
+
 export function canApproveAndMerge(row: Row): boolean {
   return row.lane?.action === approveAndMergeAction
 }

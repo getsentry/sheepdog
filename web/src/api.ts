@@ -89,6 +89,8 @@ export function createApiClient(fetcher: typeof fetch = (input, init) => fetch(i
     settings: () => json<Settings>('GET', '/api/settings'),
     updateSettings: (update: SettingsUpdate) => json<Settings>('PUT', '/api/settings', update),
     repos: () => json<string[]>('GET', '/api/repos'),
+    star: (repo: string) => json<Settings>('PUT', `/api/repos/${repo}/star`),
+    unstar: (repo: string) => json<Settings>('DELETE', `/api/repos/${repo}/star`),
     models: () => json<string[]>('GET', '/api/models'),
     reviewRequests: () => json<Requests>('GET', '/api/review-requests'),
     // repo is "owner/name".

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ApiError, createApiClient } from './api'
 import { failure, fakeFetch, reply } from './test/fakes'
 
-const settings = { repo: 'getsentry/sentry-react-native', model: 'google/gemini-4-hydrogen', hasOpenRouterKey: true }
+const settings = { repo: 'getsentry/sentry-react-native', model: 'google/gemini-4-hydrogen', hasOpenRouterKey: true, starred: [] }
 const task = {
   id: 'S6L32X34DAKG7WI2CRMWGRYNTT',
   kind: 'review',
@@ -37,6 +37,10 @@ describe('API client', () => {
           return reply(200, ['getsentry/sentry-dart', 'getsentry/junior-prod'])
         case 'GET /api/models':
           return reply(200, ['google/gemini-4-hydrogen'])
+        case 'PUT /api/repos/getsentry/sentry-react-native/star':
+          return reply(200, { ...settings, starred: ['getsentry/sentry-react-native'] })
+        case 'DELETE /api/repos/getsentry/sentry-react-native/star':
+          return reply(200, settings)
         case 'GET /api/review-requests':
           return reply(200, { repo: settings.repo, fetchedAt: null, rows: [], lanes: [] })
         case 'GET /api/repos/getsentry/sentry-react-native/pulls/6773':
@@ -64,6 +68,8 @@ describe('API client', () => {
     expect((await client.settings()).hasOpenRouterKey).toBe(true)
     await client.updateSettings({ model: 'google/gemini-4-hydrogen', openRouterKey: '' })
     expect(await client.repos()).toHaveLength(2)
+    expect((await client.star(repo)).starred).toEqual([repo])
+    expect((await client.unstar(repo)).starred).toEqual([])
     expect(await client.models()).toEqual(['google/gemini-4-hydrogen'])
     expect((await client.reviewRequests()).rows).toEqual([])
     expect((await client.pullRequest(repo, 6773)).changedFiles).toBe(7)
@@ -76,7 +82,7 @@ describe('API client', () => {
     await client.signOut()
     await client.signOutEverywhere()
 
-    expect(server.seen).toHaveLength(15)
+    expect(server.seen).toHaveLength(17)
     expect(server.seen.every((s) => s.init.credentials === 'same-origin')).toBe(true)
     expect(server.seen.some((s) => JSON.stringify(s.init.headers ?? {}).includes('Authorization'))).toBe(false)
     expect(server.seen.find((s) => s.method === 'PUT')?.body).toEqual({

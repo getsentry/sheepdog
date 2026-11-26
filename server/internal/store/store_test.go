@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -535,5 +537,103 @@ func TestPragmas(t *testing.T) {
 	}
 	if mode != "wal" || timeout != 5000 || foreignKeys != 1 {
 		t.Errorf("journal_mode %q, busy_timeout %d, foreign_keys %d", mode, timeout, foreignKeys)
+	}
+}
+
+func TestStarredReposByUser(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
+	starred := func(user int64) []string {
+		t.Helper()
+		list, err := s.StarredRepos(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list
+	}
+	if list := starred(alice); list == nil || len(list) != 0 {
+		t.Errorf("stars before the first star %#v, want an empty list", list)
+	}
+	for _, repo := range []string{"acme/zeta", "acme/alpha", "acme/zeta"} {
+		if err := s.StarRepo(ctx, alice, repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.StarRepo(ctx, bob, "acme/bob"); err != nil {
+		t.Fatal(err)
+	}
+	if list := starred(alice); !slices.Equal(list, []string{"acme/alpha", "acme/zeta"}) {
+		t.Errorf("alice stars %v", list)
+	}
+	if list := starred(bob); !slices.Equal(list, []string{"acme/bob"}) {
+		t.Errorf("bob stars %v", list)
+	}
+	for range 2 {
+		if err := s.UnstarRepo(ctx, alice, "acme/zeta"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if list := starred(alice); !slices.Equal(list, []string{"acme/alpha"}) {
+		t.Errorf("alice stars after the removal %v", list)
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, alice); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM starred_repos`).Scan(&rows); err != nil || rows != 1 {
+		t.Errorf("%d star rows after the delete of alice, %v; want only the star of bob", rows, err)
+	}
+}
+
+func TestStarLimit(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
+	for i := range MaxStars {
+		if err := s.StarRepo(ctx, alice, fmt.Sprintf("acme/repo-%03d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.StarRepo(ctx, alice, "acme/one-more"); !errors.Is(err, ErrTooManyStars) {
+		t.Errorf("star over the limit: %v", err)
+	}
+	if err := s.StarRepo(ctx, alice, "acme/repo-000"); err != nil {
+		t.Errorf("star again at the limit: %v", err)
+	}
+	if err := s.StarRepo(ctx, bob, "acme/one-more"); err != nil {
+		t.Errorf("the limit of alice stopped bob: %v", err)
+	}
+	if list, _ := s.StarredRepos(ctx, alice); len(list) != MaxStars {
+		t.Errorf("alice has %d stars, want %d", len(list), MaxStars)
+	}
+}
+
+func TestOpenAddsStarsToAnOlderDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	key := newKey(t)
+	ctx := context.Background()
+	s, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	if _, err := s.db.Exec(`DROP TABLE starred_repos`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s = openStore(t, path, key)
+	if err := s.StarRepo(ctx, alice, "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := s.StarredRepos(ctx, alice); err != nil || !slices.Equal(list, []string{"acme/app"}) {
+		t.Errorf("stars %v, %v", list, err)
+	}
+	if u, err := s.User(ctx, alice); err != nil || u.GitHubToken != "ghp_a" {
+		t.Errorf("the user of the older database = %+v, %v", u, err)
 	}
 }

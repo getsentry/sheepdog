@@ -752,12 +752,30 @@ dialog::backdrop {
   overflow-y: auto;
 }
 
+.search-list li {
+  display: flex;
+  align-items: center;
+}
+
 .search-list li button {
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
   border: none;
   background: transparent;
   text-align: left;
   border-radius: 4px;
+}
+
+.search-list li button.star {
+  width: auto;
+  flex: none;
+  padding: 4px;
+  color: var(--muted);
+}
+
+.search-list li button.starred {
+  color: var(--yellow);
 }
 
 .settings {

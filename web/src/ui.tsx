@@ -58,17 +58,19 @@ export function Modal({
   )
 }
 
-// A search field over a list. items is null while the list loads.
+// A search field over a list. items is null while the list loads. action adds a control after each item.
 export function SearchList({
   prompt,
   items,
   error,
   onSelect,
+  action,
 }: {
   prompt: string
   items: string[] | null
   error: string | null
   onSelect: (item: string) => void
+  action?: (item: string) => ReactNode
 }) {
   const [search, setSearch] = useState('')
   const matches = (items ?? []).filter((item) => item.toLowerCase().includes(search.toLowerCase()))
@@ -98,6 +100,7 @@ export function SearchList({
               <button type="button" onClick={() => onSelect(item)}>
                 {item}
               </button>
+              {action?.(item)}
             </li>
           ))}
         </ul>
@@ -112,6 +115,20 @@ export function GearIcon() {
       <path
         fill="currentColor"
         d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"
+      />
+    </svg>
+  )
+}
+
+export function StarIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        fill={filled ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+        d="m12 3.2 2.7 5.5 6 .9-4.3 4.2 1 6-5.4-2.8-5.4 2.8 1-6-4.3-4.2 6-.9Z"
       />
     </svg>
   )

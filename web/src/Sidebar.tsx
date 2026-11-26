@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useAppState, useStore } from './context'
 import { dangerTone, elapsed, relativeTime } from './format'
-import { isOutdated, key, laneSections, shownClassification, type LaneSection } from './logic'
-import { currentRepo, isMerging, isSettingUp } from './store'
+import { isOutdated, key, laneSections, shownClassification, starredFirst, type LaneSection } from './logic'
+import { currentRepo, isMerging, isSettingUp, isStarred } from './store'
 import type { PullLink, Row, Setup } from './types'
-import { Capsule, ExternalLink, GearIcon, Modal, SearchList, Spinner, StopIcon, useNow } from './ui'
+import { Capsule, ExternalLink, GearIcon, Modal, SearchList, Spinner, StarIcon, StopIcon, useNow } from './ui'
 
 export function Sidebar({
   onApproveAndMerge,
@@ -65,6 +65,7 @@ function RepoPicker() {
   const repo = currentRepo(state)
   // The server keeps the name in lower case. The repository list has the name as GitHub shows it.
   const name = state.repositories?.find((item) => item.toLowerCase() === repo.toLowerCase()) ?? repo
+  const repositories = state.repositories && starredFirst(state.repositories, state.settings?.starred ?? [])
 
   return (
     <>
@@ -80,13 +81,34 @@ function RepoPicker() {
       </button>
       {open && (
         <Modal label="Repositories" className="picker" onClose={() => setOpen(false)}>
+          {state.starError && (
+            <p className="error" role="alert">
+              {state.starError}
+            </p>
+          )}
           <SearchList
             prompt="Search repositories"
-            items={state.repositories}
+            items={repositories}
             error={state.repositoriesError}
             onSelect={(item) => {
               setOpen(false)
               if (item.toLowerCase() !== repo.toLowerCase()) void actions.selectRepo(item)
+            }}
+            action={(item) => {
+              const starred = isStarred(state, item)
+              const label = starred ? 'Remove star' : 'Star'
+              return (
+                <button
+                  type="button"
+                  className={`star borderless icon${starred ? ' starred' : ''}`}
+                  title={label}
+                  aria-label={label}
+                  disabled={state.settings === null}
+                  onClick={() => void actions.toggleStar(item)}
+                >
+                  <StarIcon filled={starred} />
+                </button>
+              )
             }}
           />
         </Modal>

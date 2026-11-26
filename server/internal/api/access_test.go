@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -340,7 +341,7 @@ func TestReusedLoginGetsNewUser(t *testing.T) {
 	h.wantLogin(second, "alice")
 	var settings settingsResponse
 	h.json("GET", "/api/settings", second, nil, http.StatusOK, &settings)
-	if settings != (settingsResponse{}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}}) {
 		t.Errorf("settings of the new user %+v, want none", settings)
 	}
 	h.wantError("GET", "/api/models", second, nil, http.StatusBadRequest, "Set an OpenRouter API key first")
@@ -354,7 +355,7 @@ func TestReusedLoginGetsNewUser(t *testing.T) {
 	h.json("DELETE", "/api/sessions", second, nil, http.StatusNoContent, nil)
 	h.wantLogin(first, "alice")
 	h.json("GET", "/api/settings", first, nil, http.StatusOK, &settings)
-	if settings != (settingsResponse{Repo: aliceRepo, Model: "alice/model", HasOpenRouterKey: true}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "alice/model", HasOpenRouterKey: true, Starred: []string{}}) {
 		t.Errorf("settings of the first user %+v", settings)
 	}
 	h.json("GET", reviewPath, first, nil, http.StatusOK, nil)

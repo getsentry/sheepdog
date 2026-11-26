@@ -148,9 +148,10 @@ function pullRequest(row: Row): PullRequest {
   }
 }
 
-test('signs in, opens a PR, cancels approve and merge, opens the settings, and sets up a repository', async ({ page }) => {
+test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, and stars one', async ({ page }) => {
   let signedIn = false
   let repo = ''
+  let starred: string[] = []
   let setupOpened = false
   let setupBody: unknown = null
   const writes: string[] = []
@@ -158,7 +159,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, and s
 
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true })
+  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred })
   const requests = (): Requests =>
     repo === sample
       ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'] }
@@ -177,6 +178,15 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, and s
       return json(route, 200, { login: 'alwx', sessionToken: 'not-a-real-token' })
     }
     if (!signedIn) return json(route, 401, { error: 'Sign in first' })
+    const star = path.match(/^\/api\/repos\/([^/]+\/[^/]+)\/star$/)
+    if (star && request.method() === 'PUT') {
+      starred = [...new Set([...starred, star[1]])].sort()
+      return json(route, 200, settings())
+    }
+    if (star && request.method() === 'DELETE') {
+      starred = starred.filter((item) => item !== star[1])
+      return json(route, 200, settings())
+    }
     const pull = path.match(/^\/api\/repos\/[^/]+\/[^/]+\/pulls\/(\d+)(\/\w+)?$/)
     switch (call) {
       case 'GET /api/me':
@@ -286,4 +296,19 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, and s
   expect(writes).toEqual(['POST /api/session', 'PUT /api/settings', 'PUT /api/settings', `POST /api/repos/${bare}/setup`])
   expect(reads).not.toContain(`GET /api/repos/${bare}/classifications`)
   expect(setupBody).toEqual({ content: template })
+
+  await page.getByRole('button', { name: /sentry-capacitor/ }).click()
+  const names = picker.getByRole('listitem')
+  await expect(names.first()).toContainText('getsentry/sentry-cocoa')
+  await names.filter({ hasText: 'getsentry/sentry-react-native' }).getByRole('button', { name: 'Star' }).click()
+  await expect(names.first()).toContainText('getsentry/sentry-react-native')
+  await expect(names.first().getByRole('button', { name: 'Remove star' })).toBeVisible()
+  await expect(picker).toBeVisible()
+  await picker.getByRole('searchbox').fill('getsentry/sentry')
+  await expect(names).toHaveText(['getsentry/sentry-react-native', 'getsentry/sentry-cocoa', bare])
+  await picker.getByRole('searchbox').fill('')
+  await page.screenshot({ path: join(screenshots, '8-starred-picker.png') })
+  expect(starred).toEqual(['getsentry/sentry-react-native'])
+  expect(writes.slice(4)).toEqual(['PUT /api/repos/getsentry/sentry-react-native/star'])
+  expect(repo).toBe(bare)
 })

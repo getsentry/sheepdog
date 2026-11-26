@@ -9,6 +9,8 @@ export interface Settings {
   repo: string
   model: string
   hasOpenRouterKey: boolean
+  // The starred repositories in lower case and in name order.
+  starred: string[]
 }
 
 // A missing field stays unchanged. An empty openRouterKey deletes the key.
