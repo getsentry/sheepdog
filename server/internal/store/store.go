@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS starred_repos (
 	repo TEXT NOT NULL,
 	PRIMARY KEY (user_id, repo)
 );
+CREATE TABLE IF NOT EXISTS global_rules (
+	user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	content TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS repo_prefs (
 	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	repo TEXT NOT NULL,
@@ -232,6 +236,28 @@ func (s *Store) UpdateSettings(ctx context.Context, userID int64, settings Setti
 		}
 	}
 	return tx.Commit()
+}
+
+// GlobalRules returns the rules file text that the user set for repositories without .github/sheepdog.yml, or "" without one.
+func (s *Store) GlobalRules(ctx context.Context, userID int64) (string, error) {
+	var content string
+	err := s.db.QueryRowContext(ctx, `SELECT content FROM global_rules WHERE user_id = ?`, userID).Scan(&content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return content, err
+}
+
+// SetGlobalRules stores the global rules of the user. An empty content deletes them.
+func (s *Store) SetGlobalRules(ctx context.Context, userID int64, content string) error {
+	if content == "" {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM global_rules WHERE user_id = ?`, userID)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO global_rules (user_id, content) VALUES (?, ?)
+		ON CONFLICT (user_id) DO UPDATE SET content = excluded.content`, userID, content)
+	return err
 }
 
 func (s *Store) Prefs(ctx context.Context, userID int64, repo string) (Prefs, error) {

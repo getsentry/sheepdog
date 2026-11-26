@@ -3,7 +3,7 @@ import { useAppState, useStore } from './context'
 import { dangerTone, elapsed, relativeTime } from './format'
 import { isOutdated, key, laneSections, shownClassification, starredFirst, type LaneSection } from './logic'
 import { RepoSettings } from './RepoSettings'
-import { currentRepo, isMerging, isSettingUp, isStarred } from './store'
+import { currentRepo, hasNoRules, isMerging, isSettingUp, isStarred } from './store'
 import type { PullLink, Row, Setup } from './types'
 import {
   Capsule,
@@ -52,13 +52,13 @@ export function Sidebar({
             <Banner />
             <p className="placeholder">Select a repository</p>
           </>
-        ) : state.requests?.setup ? (
+        ) : hasNoRules(state.requests) && state.requests?.setup ? (
           <>
             <Banner />
-            <SetupWarning repo={repo} setup={state.requests.setup} />
+            <SetupWarning repo={repo} setup={state.requests.setup} onOpenSettings={onOpenSettings} />
           </>
         ) : (
-          <RequestList onApproveAndMerge={onApproveAndMerge} />
+          <RequestList onApproveAndMerge={onApproveAndMerge} onOpenSettings={onOpenSettings} />
         )}
       </div>
       <footer>
@@ -142,26 +142,46 @@ function Banner() {
   )
 }
 
-function SetupWarning({ repo, setup }: { repo: string; setup: Setup }) {
+// compact is the short warning above the list of a repository that uses the global rules.
+function SetupWarning({
+  repo,
+  setup,
+  compact = false,
+  onOpenSettings,
+}: {
+  repo: string
+  setup: Setup
+  compact?: boolean
+  onOpenSettings: () => void
+}) {
   const [dialogOpen, setDialogOpen] = useState(false)
+  const size = compact ? 'small' : ''
   return (
-    <section className="setup" aria-label="Setup">
-      <h2>No Sheepdog rules</h2>
+    <section className={compact ? 'setup compact' : 'setup'} aria-label="Setup">
+      {!compact && <h2>No Sheepdog rules</h2>}
       <p>
-        {repo} has no <code>.github/sheepdog.yml</code> on its default branch <code>{setup.defaultBranch}</code>.
-        Sheepdog works only with repositories that have this file.
+        {repo} has no <code>.github/sheepdog.yml</code> on its default branch <code>{setup.defaultBranch}</code>.{' '}
+        {compact
+          ? 'Sheepdog uses your global rules for it, not rules of the repository.'
+          : 'Sheepdog works only with repositories that have this file, or with your global rules.'}
       </p>
-      {setup.pullRequest ? (
+      {setup.pullRequest && (
         <p>
           Sheepdog waits for the merge of{' '}
           <ExternalLink href={setup.pullRequest.url}>pull request #{setup.pullRequest.number}</ExternalLink>, which adds
           the file.
         </p>
-      ) : (
-        <button type="button" className="primary" onClick={() => setDialogOpen(true)}>
-          Create sheepdog.yml
-        </button>
       )}
+      <div className="buttons">
+        {!setup.pullRequest && (
+          <button type="button" className={compact ? size : 'primary'} onClick={() => setDialogOpen(true)}>
+            Create sheepdog.yml
+          </button>
+        )}
+        <button type="button" className={size} onClick={onOpenSettings}>
+          {compact ? 'Edit global rules' : 'Set global rules'}
+        </button>
+      </div>
       {dialogOpen && <SetupDialog repo={repo} onClose={() => setDialogOpen(false)} />}
     </section>
   )
@@ -266,7 +286,13 @@ function SetupDialog({ repo, onClose }: { repo: string; onClose: () => void }) {
   )
 }
 
-function RequestList({ onApproveAndMerge }: { onApproveAndMerge: (rows: Row[]) => void }) {
+function RequestList({
+  onApproveAndMerge,
+  onOpenSettings,
+}: {
+  onApproveAndMerge: (rows: Row[]) => void
+  onOpenSettings: () => void
+}) {
   const state = useAppState()
   const { actions } = useStore()
   const now = useNow(30000)
@@ -313,6 +339,9 @@ function RequestList({ onApproveAndMerge }: { onApproveAndMerge: (rows: Row[]) =
   return (
     <>
       <Banner />
+      {requests?.setup && requests.globalRules && (
+        <SetupWarning repo={repo} setup={requests.setup} compact onOpenSettings={onOpenSettings} />
+      )}
       {!fetchedAt && state.error === null && !requests?.error ? (
         <div className="center">
           <Spinner />

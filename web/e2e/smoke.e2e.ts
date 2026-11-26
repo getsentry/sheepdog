@@ -148,10 +148,11 @@ function pullRequest(row: Row): PullRequest {
   }
 }
 
-test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, stars one, and refreshes', async ({ page }) => {
+test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, stars one, refreshes, and sets global rules', async ({ page }) => {
   let signedIn = false
   let repo = ''
   let starred: string[] = []
+  let globalRules = ''
   // The settings of each repository that the user changed.
   const repoSettings = new Map<string, { autoRefresh: boolean; autoClassify: boolean }>()
   // The event streams after a refresh wait until the test checks the spinner.
@@ -164,12 +165,20 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
 
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred })
+  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred, globalRules })
   const requests = (): Requests =>
     repo === sample
       ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'], defaultBranch: 'main' }
       : repo === bare
-        ? { repo, fetchedAt: ago(0.1), rows: [], lanes: [], setup: { defaultBranch: 'main', pullRequest: setupOpened ? setupPR : null } }
+        ? {
+            repo,
+            fetchedAt: ago(0.1),
+            rows: globalRules ? rows : [],
+            lanes: globalRules ? ['safe'] : [],
+            defaultBranch: 'main',
+            setup: { defaultBranch: 'main', pullRequest: setupOpened ? setupPR : null },
+            globalRules: globalRules !== '',
+          }
         : { repo, fetchedAt: null, rows: [], lanes: [] }
 
   await page.route('**/api/**', async (route) => {
@@ -205,8 +214,9 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
       case 'GET /api/settings':
         return json(route, 200, settings())
       case 'PUT /api/settings': {
-        const update = request.postDataJSON() as { repo?: string }
+        const update = request.postDataJSON() as { repo?: string; globalRules?: string }
         repo = update.repo?.toLowerCase() ?? repo
+        globalRules = update.globalRules ?? globalRules
         return json(route, 200, settings())
       }
       case 'POST /api/review-requests/refresh':
@@ -227,7 +237,11 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
       case `GET /api/repos/${sample}/classifications`:
         return json(route, 200, [stored])
       case `GET /api/repos/${bare}/classifications`:
-        return json(route, 409, { error: `${bare} has no .github/sheepdog.yml on main. Set it up first` })
+        return globalRules
+          ? json(route, 200, [])
+          : json(route, 409, { error: `${bare} has no .github/sheepdog.yml on main. Set it up first, or set global rules in Settings` })
+      case 'GET /api/global-rules/template':
+        return json(route, 200, { content: template })
       case `GET /api/repos/${bare}/setup/template`:
         return json(route, 200, { content: template })
       case `POST /api/repos/${bare}/setup`:
@@ -379,4 +393,24 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
     `PUT /api/repos/${sample}/settings`,
     `PUT /api/repos/${sample}/settings`,
   ])
+
+  await repoDialog.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const rulesSection = settingsDialog.getByRole('region', { name: 'Global rules' })
+  await rulesSection.getByRole('button', { name: 'Start from the template' }).click()
+  await expect(rulesSection.getByLabel('Global rules')).toHaveValue(template)
+  await rulesSection.getByRole('button', { name: 'Save' }).click()
+  await expect(rulesSection.getByText('Saved')).toBeVisible()
+  expect(globalRules).toBe(template)
+  await page.screenshot({ path: join(screenshots, '11-global-rules-settings.png') })
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: /reviewer-react-native-sample/ }).click()
+  await picker.getByRole('searchbox').fill('capacitor')
+  await picker.getByRole('button', { name: bare }).click()
+  const notice = page.getByRole('region', { name: 'Setup' })
+  await expect(notice).toContainText('Sheepdog uses your global rules for it, not rules of the repository.')
+  await expect(notice).toContainText('Sheepdog waits for the merge of pull request #1290')
+  await expect(page.getByRole('region', { name: 'safe' })).toBeVisible()
+  await page.screenshot({ path: join(screenshots, '12-global-rules-list.png') })
 })

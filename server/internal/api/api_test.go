@@ -168,7 +168,7 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			<-hold
 		}
 		nodes := ""
-		if q, _ := req.Variables["q"].(string); strings.Contains(q, "repo:getsentry/"+id.login+"-repo ") {
+		if q, _ := req.Variables["q"].(string); strings.Contains(q, "repo:getsentry/"+id.login+"-repo ") || strings.Contains(q, "repo:"+noRulesRepo+" ") {
 			nodes = f.pullNode(id, "CLEAN")
 		}
 		fmt.Fprintf(w, `{"data":{"repository":{"defaultBranchRef":{"name":"main"}},"search":{"nodes":[%s]},"repositoryOwner":{"teams":{"nodes":[]}}}}`, nodes)

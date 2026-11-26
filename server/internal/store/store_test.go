@@ -724,3 +724,69 @@ func TestOpenAddsPreferencesToAnOlderDatabase(t *testing.T) {
 		t.Errorf("prefs after the change = %+v, %v", p, err)
 	}
 }
+
+func TestGlobalRulesByUser(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
+	globalRules := func(user int64) string {
+		t.Helper()
+		content, err := s.GlobalRules(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return content
+	}
+	set := func(user int64, content string) {
+		t.Helper()
+		if err := s.SetGlobalRules(ctx, user, content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if content := globalRules(alice); content != "" {
+		t.Errorf("rules before a change %q", content)
+	}
+	set(alice, "version: 1\n")
+	set(alice, "version: 1\nlanes: {}\n")
+	set(bob, "version: 1\n")
+	if content := globalRules(alice); content != "version: 1\nlanes: {}\n" {
+		t.Errorf("alice rules %q", content)
+	}
+	set(bob, "")
+	set(bob, "")
+	if content := globalRules(bob); content != "" {
+		t.Errorf("bob rules after the delete %q", content)
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, alice); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM global_rules`).Scan(&rows); err != nil || rows != 0 {
+		t.Errorf("%d rule rows after the delete of alice, %v", rows, err)
+	}
+}
+
+func TestOpenAddsGlobalRulesToAnOlderDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	key := newKey(t)
+	ctx := context.Background()
+	s, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	if _, err := s.db.Exec(`DROP TABLE global_rules`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s = openStore(t, path, key)
+	if err := s.SetGlobalRules(ctx, alice, "version: 1\n"); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := s.GlobalRules(ctx, alice); err != nil || content != "version: 1\n" {
+		t.Errorf("rules of the older database %q, %v", content, err)
+	}
+}

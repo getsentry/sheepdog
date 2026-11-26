@@ -39,18 +39,26 @@ type Lane struct {
 }
 
 // fetchRequests polls the review requests and puts each row in a lane with the rules of its base branch.
-// Without a rules file on the default branch, it returns only the setup state.
+// Without a rules file on the default branch, it uses the global rules of the user for every row, and returns only the setup state without them.
 func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user store.User) (Requests, error) {
 	missingOn, err := s.missingRules(ctx, client, user.ID, user.Repo)
 	if err != nil {
 		return Requests{}, err
 	}
+	var setup *Setup
+	var global *rules.Rules
 	if missingOn != "" {
 		pr, err := client.OpenPullRequest(ctx, user.Repo, setupBranch, missingOn)
 		if err != nil {
 			return Requests{}, err
 		}
-		return Requests{Rows: []Row{}, Lanes: []string{}, DefaultBranch: missingOn, Setup: &Setup{DefaultBranch: missingOn, PullRequest: pr}}, nil
+		setup = &Setup{DefaultBranch: missingOn, PullRequest: pr}
+		if global, err = s.globalRules(ctx, user.ID); err != nil {
+			return Requests{}, err
+		}
+		if global == nil {
+			return Requests{Rows: []Row{}, Lanes: []string{}, DefaultBranch: missingOn, Setup: setup}, nil
+		}
 	}
 	rows, defaultBranch, err := client.ReviewRequests(ctx, user.Repo, user.Login)
 	if err != nil {
@@ -65,7 +73,7 @@ func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user 
 		classifications[c.Number] = &rules.Classification{HeadSHA: c.HeadSHA, Score: c.Score}
 	}
 
-	result := Requests{Rows: make([]Row, 0, len(rows)), Lanes: []string{}, DefaultBranch: defaultBranch}
+	result := Requests{Rows: make([]Row, 0, len(rows)), Lanes: []string{}, DefaultBranch: defaultBranch, Setup: setup, GlobalRules: global != nil, global: global}
 	rulesByBase := map[string]*rules.Rules{}
 	var problems []string
 	var ciNumbers []int
@@ -73,7 +81,9 @@ func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user 
 		laneRules, read := rulesByBase[row.BaseRef]
 		if !read {
 			var problem string
-			if laneRules, problem, err = rulesAt(ctx, client, user.Repo, row.BaseRef); err != nil {
+			if global != nil {
+				laneRules = global
+			} else if laneRules, problem, err = rulesAt(ctx, client, user.Repo, row.BaseRef); err != nil {
 				return Requests{}, err
 			}
 			rulesByBase[row.BaseRef] = laneRules
@@ -153,7 +163,11 @@ func (s *Server) listed(userID int64, repo string, number int) bool {
 // approveAndMerge evaluates the lane again with fresh data, because the lane of the list can be up to one poll old.
 func (s *Server) approveAndMerge(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok || !s.requireRules(w, r, user, repo) {
+	if !ok {
+		return
+	}
+	global, ok := s.repoRules(w, r, user, repo)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -182,14 +196,17 @@ func (s *Server) approveAndMerge(w http.ResponseWriter, r *http.Request, user st
 		writeError(w, http.StatusConflict, "The pull request has new commits. Check them before you approve")
 		return
 	}
-	laneRules, problem, err := rulesAt(ctx, client, repo, pr.BaseRef)
-	if err != nil {
-		githubError(w, err)
-		return
-	}
-	if problem != "" {
-		writeError(w, http.StatusConflict, problem)
-		return
+	laneRules := global
+	if laneRules == nil {
+		var problem string
+		if laneRules, problem, err = rulesAt(ctx, client, repo, pr.BaseRef); err != nil {
+			githubError(w, err)
+			return
+		}
+		if problem != "" {
+			writeError(w, http.StatusConflict, problem)
+			return
+		}
 	}
 	if laneRules == nil {
 		writeError(w, http.StatusConflict, fmt.Sprintf("The repository has no %s on %s", github.RulesPath, pr.BaseRef))

@@ -23,7 +23,7 @@ type fakeSetupPull struct {
 const (
 	noRulesRepo = "getsentry/no-rules"
 	mainSHA     = "sha-main"
-	noRulesText = "getsentry/no-rules has no .github/sheepdog.yml on main. Set it up first"
+	noRulesText = "getsentry/no-rules has no .github/sheepdog.yml on main. Set it up first, or set global rules in Settings"
 )
 
 func repoOf(path string) string {
@@ -191,7 +191,7 @@ func TestRulesCheckIsCachedForEachUser(t *testing.T) {
 	h.json("GET", path, alice, nil, http.StatusOK, nil)
 	h.github.removeRules("getsentry/sentry-cocoa@main")
 	h.json("GET", path, alice, nil, http.StatusOK, nil)
-	h.wantError("GET", path, bob, nil, http.StatusConflict, "getsentry/sentry-cocoa has no .github/sheepdog.yml on main. Set it up first")
+	h.wantError("GET", path, bob, nil, http.StatusConflict, "getsentry/sentry-cocoa has no .github/sheepdog.yml on main. Set it up first, or set global rules in Settings")
 	if a, b := h.github.defaultReadCount("alice", "getsentry/sentry-cocoa"), h.github.defaultReadCount("bob", "getsentry/sentry-cocoa"); a != 1 || b != 1 {
 		t.Errorf("checks of alice %d and bob %d, want 1 each", a, b)
 	}
@@ -207,7 +207,7 @@ func TestRulesCheckIsCachedForEachUser(t *testing.T) {
 	age(29 * time.Second)
 	h.json("GET", path, alice, nil, http.StatusOK, nil)
 	age(30 * time.Second)
-	h.wantError("GET", path, alice, nil, http.StatusConflict, "getsentry/sentry-cocoa has no .github/sheepdog.yml on main. Set it up first")
+	h.wantError("GET", path, alice, nil, http.StatusConflict, "getsentry/sentry-cocoa has no .github/sheepdog.yml on main. Set it up first, or set global rules in Settings")
 	if n := h.github.defaultReadCount("alice", "getsentry/sentry-cocoa"); n != 2 {
 		t.Errorf("%d checks of alice after 30 seconds, want 2", n)
 	}
@@ -236,11 +236,11 @@ func TestSetupTemplate(t *testing.T) {
 			t.Errorf("the template does not explain the CI workflow:\n%s", template.Content)
 		}
 	}
-	if !strings.Contains(rulesTemplate(""), "# classification:\n#   model: ") {
-		t.Errorf("the template without a model has no placeholder:\n%s", rulesTemplate(""))
+	if !strings.Contains(rulesTemplate("", false), "# classification:\n#   model: ") {
+		t.Errorf("the template without a model has no placeholder:\n%s", rulesTemplate("", false))
 	}
 	for _, model := range []string{`odd/"model" #1 \x`, "a: b"} {
-		if parsed, err := rules.Parse([]byte(rulesTemplate(model))); err != nil || parsed.Classification.Model != model {
+		if parsed, err := rules.Parse([]byte(rulesTemplate(model, false))); err != nil || parsed.Classification.Model != model {
 			t.Errorf("template with model %q: %+v, %v", model, parsed.Classification, err)
 		}
 	}
@@ -252,7 +252,7 @@ func TestSetupOpensPullRequest(t *testing.T) {
 	bob := h.signIn(bobToken)
 	h.settings(bob, map[string]string{"repo": bobRepo})
 	h.waitRequests(bob, func(r Requests) bool { return r.FetchedAt != nil })
-	content := rulesTemplate("alice/model")
+	content := rulesTemplate("alice/model", false)
 	events := h.events(alice)
 	events.nextRequests()
 

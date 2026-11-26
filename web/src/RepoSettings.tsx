@@ -9,7 +9,7 @@ export function RepoSettings({ repo, onClose }: { repo: string; onClose: () => v
   const current = state.repoSettings?.repo === repo.toLowerCase() ? state.repoSettings : null
   const settings = state.settings
   const missingModel = settings !== null && (!settings.hasOpenRouterKey || !settings.model)
-  // GitHub edits a file only on a branch, so the link needs the default branch from the last poll.
+  // GitHub edits a file only on a branch, so the link needs the default branch from the last poll. Without the file, there is nothing to edit.
   const requests = state.requests
   const branch = requests?.repo.toLowerCase() === repo.toLowerCase() && !requests.setup ? requests.defaultBranch : undefined
   const editURL = branch && `https://github.com/${repo}/edit/${branch.split('/').map(encodeURIComponent).join('/')}/.github/sheepdog.yml`

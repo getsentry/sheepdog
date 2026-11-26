@@ -130,6 +130,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me", s.authed(s.me))
 	mux.HandleFunc("GET /api/settings", s.authed(s.getSettings))
 	mux.HandleFunc("PUT /api/settings", s.authed(s.putSettings))
+	mux.HandleFunc("GET /api/global-rules/template", s.authed(s.globalRulesTemplate))
 	mux.HandleFunc("GET /api/repos", s.authed(s.repos))
 	mux.HandleFunc("GET /api/models", s.authed(s.models))
 	mux.HandleFunc("GET /api/review-requests", s.authed(s.reviewRequests))

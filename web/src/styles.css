@@ -399,6 +399,11 @@ a {
   cursor: default;
 }
 
+.global-rules code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.global-rules,
 .repo-settings section {
   display: flex;
   flex-direction: column;
@@ -408,6 +413,7 @@ a {
   border-top: 1px solid var(--border);
 }
 
+.global-rules h3,
 .repo-settings h3 {
   margin: 0;
   font-size: 13px;
@@ -531,6 +537,17 @@ a {
   font-size: 14px;
 }
 
+.setup.compact {
+  gap: 6px;
+  margin: 8px 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.setup.compact code {
+  font-size: 11px;
+}
+
 .setup code,
 .setup-dialog code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -541,7 +558,8 @@ a {
   width: min(720px, 92vw);
 }
 
-.setup-dialog textarea {
+.setup-dialog textarea,
+.global-rules textarea {
   height: min(480px, 60vh);
   padding: 8px;
   border: 1px solid var(--border);
@@ -553,6 +571,15 @@ a {
   resize: vertical;
   white-space: pre;
   tab-size: 2;
+}
+
+.global-rules textarea {
+  height: min(260px, 35vh);
+}
+
+.global-rules > textarea,
+.global-rules > .buttons {
+  align-self: stretch;
 }
 
 /* Tasks */

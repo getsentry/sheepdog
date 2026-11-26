@@ -129,7 +129,7 @@ After 10 failed sign-ins in a minute from one client IP address, the server reje
 
 ## Review lanes
 
-Sheepdog works only with repositories that have the file `.github/sheepdog.yml` on the default branch. The file sorts the review requests into lanes. The server reads the lanes from the base branch of each PR, so a PR cannot change its own lane. A PR whose base branch has no file gets a row without a lane.
+The file `.github/sheepdog.yml` on the default branch sorts the review requests of a repository into lanes. A repository without the file uses the [global rules](#global-rules) of the user. Without both, Sheepdog does not work with the repository. The server reads the lanes from the base branch of each PR, so a PR cannot change its own lane. A PR whose base branch has no file gets a row without a lane.
 
 ```yaml
 version: 1
@@ -184,7 +184,7 @@ A GitHub error, for example for an approval of your own PR, gives status 502 wit
 
 ### Set up a repository
 
-At each poll, the server first reads `.github/sheepdog.yml` from the default branch of the selected repository. If the file is missing, the server does not search for review requests. The `requests` result then has empty `rows` and `lanes`, and `setup`:
+At each poll, the server first reads `.github/sheepdog.yml` from the default branch of the selected repository. If the file is missing and the user has no [global rules](#global-rules), the server does not search for review requests. The `requests` result then has empty `rows` and `lanes`, and `setup`:
 
 ```json
 {"defaultBranch": "main", "pullRequest": {"number": 12, "url": "https://github.com/acme/app/pull/12"}}
@@ -192,9 +192,9 @@ At each poll, the server first reads `.github/sheepdog.yml` from the default bra
 
 `pullRequest` is the open PR from the branch `sheepdog/setup` to the default branch, or `null`. After that PR is merged, the next poll shows the review requests. The poll interval stays 30 seconds.
 
-The routes for a PR, its review, its classification, the classifications of the repository, and approve and merge return 409 with the text `<owner/name> has no .github/sheepdog.yml on <branch>. Set it up first` for a repository without the file. The server keeps the result of this check for each user and repository for 30 seconds.
+The routes for a PR, its review, its classification, the classifications of the repository, and approve and merge return 409 with the text `<owner/name> has no .github/sheepdog.yml on <branch>. Set it up first, or set global rules in Settings` for a repository without the file, when the user has no global rules. The server keeps the result of the check of the default branch for each user and repository for 30 seconds.
 
-`GET /api/repos/{owner}/{name}/setup/template` returns `{"content"}`, a rules file to start with. It sets `classification.model` to the model of the user, or has a comment instead when the user has no model. Its lane `safe` approves and merges small Dependabot updates without a major version change, with green checks and a score of at most 2.
+`GET /api/repos/{owner}/{name}/setup/template` returns `{"content"}`, a rules file to start with. `GET /api/global-rules/template` returns the same rules as global rules, without the comment about CI. It sets `classification.model` to the model of the user, or has a comment instead when the user has no model. Its lane `safe` approves and merges small Dependabot updates without a major version change, with green checks and a score of at most 2.
 
 `POST /api/repos/{owner}/{name}/setup` takes `{"content"}` and opens a PR that adds the file:
 
@@ -204,6 +204,14 @@ The routes for a PR, its review, its classification, the classifications of the 
 4. It returns 201 with `{"number", "url"}` of the PR, and checks GitHub again at once.
 
 The server never commits to the default branch, because rulesets in many repositories require a PR for every change there. The PR needs a review like every other PR of the repository. A GitHub error, for example for a user without write access, gives status 502 with the GitHub text. The server cannot add the workflow `.github/workflows/sheepdog.yml`, because a token needs the scope `workflow` for files in `.github/workflows`. The template explains how to add it.
+
+### Global rules
+
+Each user can set global rules in Settings of the web app, or with `PUT /api/settings` and `{"globalRules": "<text>"}`. They have the same form as `.github/sheepdog.yml`, and the server checks them before it stores them. The server keeps them in its database, not on GitHub.
+
+For a repository without `.github/sheepdog.yml` on the default branch, the server uses the global rules of the user for all PRs, on every base branch. The PR routes and approve and merge then work as with a rules file. `classification.model` of the global rules replaces the model of the user for these classifications. The `requests` result has `"globalRules": true`, and still has `setup`, so that the web app shows a short warning and can open a setup PR. A rules file on the default branch always wins over the global rules. Other users of the repository use their own global rules.
+
+The global rules can approve and merge PRs in repositories whose team did not agree to any rules. "Approve and merge" still needs a click and uses the GitHub account of the user.
 
 ## Auto classify
 
@@ -300,7 +308,7 @@ All requests and responses use JSON. An error response has the form `{"error": "
 
 The browser sends the cookie by itself, so the server protects cookie requests against other sites. The cookie has `HttpOnly`, `SameSite=Strict`, and `Path=/`. A cookie request with a method other than `GET` or `HEAD` gets status 403 unless its `Origin` header is the origin of the server, for example `https://sheepdog.example.com`. A request without an `Origin` header gets 403 too. `POST /api/session` with an `Origin` header of another origin, also `null`, gets status 403. Requests with the `Authorization` header do not need an `Origin` header.
 
-The routes under `/api/repos/{owner}/{name}/pulls/` and `/api/repos/{owner}/{name}/classifications` return 409 for a repository without `.github/sheepdog.yml` on its default branch.
+The routes under `/api/repos/{owner}/{name}/pulls/` and `/api/repos/{owner}/{name}/classifications` return 409 for a repository without `.github/sheepdog.yml` on its default branch, when the user has no global rules.
 
 The web app shows the starred repositories first in the repository picker. Sheepdog keeps the stars in its own database for each user, not on GitHub, because a star on GitHub is public and has another meaning. A star does not need `.github/sheepdog.yml`.
 
@@ -316,7 +324,7 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `DELETE /api/session` | Sign out. Ends this session, closes its event streams, and deletes the session cookie. Returns 204. |
 | `DELETE /api/sessions` | Sign out on all devices. Ends every session of the user, closes all its event streams, and deletes the session cookie. Returns 204. |
 | `GET /api/me` | Returns `{"login"}`. |
-| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, and `starred`. `PUT` takes `repo`, `model`, and `openRouterKey`. An empty key deletes it. `starred` is the list of starred repositories in name order, and an empty list when there is none. |
+| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, `starred`, and `globalRules`. `PUT` takes `repo`, `model`, `openRouterKey`, and `globalRules`. An empty key deletes it. An empty `globalRules` deletes the global rules, and rules that are not valid get status 400. See [Global rules](#global-rules). `starred` is the list of starred repositories in name order, and an empty list when there is none. |
 | `GET /api/repos` | The repositories of the user. |
 | `GET /api/repos/{owner}/{name}/settings`, `PUT /api/repos/{owner}/{name}/settings` | The settings of the user for the repository: `repo`, `autoRefresh`, and `autoClassify`. `PUT` takes `autoRefresh` and `autoClassify`, and returns the new settings. A repository without `.github/sheepdog.yml` has settings too. |
 | `PUT /api/repos/{owner}/{name}/star`, `DELETE /api/repos/{owner}/{name}/star` | Add or remove a star of the repository. Returns the settings. A second `PUT` or `DELETE` changes nothing. A user can star at most 200 repositories. One more star gets status 409. |
@@ -332,6 +340,7 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge` | Approve and merge a PR of an `approve-and-automerge` lane. See [Review lanes](#review-lanes). |
 | `GET /api/repos/{owner}/{name}/setup/template` | A rules file to start with. See [Set up a repository](#set-up-a-repository). |
 | `POST /api/repos/{owner}/{name}/setup` | Open a PR that adds the rules file. See [Set up a repository](#set-up-a-repository). |
+| `GET /api/global-rules/template` | Global rules to start with. See [Global rules](#global-rules). |
 | `GET /api/tasks` | The running tasks of the user. |
 | `DELETE /api/tasks/{id}` | Stop a task. |
 | `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, `review`, and `classification`. A new stream of a session ends the older streams of that session. A user can open at most 8 streams at a time. One more stream gets status 429. |

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"sheepdog/internal/github"
+	"sheepdog/internal/rules"
 	"sheepdog/internal/store"
 )
 
@@ -20,8 +21,11 @@ type Requests struct {
 	DefaultBranch string   `json:"defaultBranch,omitempty"`
 	RulesError    string   `json:"rulesError,omitempty"`
 	Error         string   `json:"error,omitempty"`
-	// Setup is set when the default branch has no rules file. Then the poll does not search for review requests.
+	// Setup is set when the default branch has no rules file. Without global rules, the poll then does not search for review requests.
 	Setup *Setup `json:"setup,omitempty"`
+	// GlobalRules is true when the lanes come from the global rules of the user, because the default branch has no rules file.
+	GlobalRules bool `json:"globalRules,omitempty"`
+	global      *rules.Rules
 }
 
 // Setup names the default branch without a rules file, and the open setup PR or nil.
@@ -122,7 +126,7 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 			return
 		}
 		if err == nil {
-			s.autoClassify(ctx, user.ID, user.Repo, polled.Rows)
+			s.autoClassify(ctx, user.ID, user.Repo, polled.Rows, polled.global)
 		}
 		ticker.Reset(s.pollInterval)
 		if !s.waitPoll(ctx, run, user.ID, user.Repo, ticker.C) {
@@ -175,6 +179,7 @@ func (s *Server) record(userID int64, run *pollRun, polled Requests, err error) 
 		result.DefaultBranch = polled.DefaultBranch
 		result.RulesError = polled.RulesError
 		result.Setup = polled.Setup
+		result.GlobalRules = polled.GlobalRules
 		result.Error = ""
 	}
 	s.requests[userID] = result

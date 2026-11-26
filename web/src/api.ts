@@ -113,6 +113,7 @@ export function createApiClient(fetcher: typeof fetch = (input, init) => fetch(i
       json<MergeResult>('POST', `${pull(repo, number)}/approve-and-merge`, { headSha }),
     setupTemplate: async (repo: string) =>
       (await json<{ content: string }>('GET', `/api/repos/${repo}/setup/template`)).content,
+    globalRulesTemplate: async () => (await json<{ content: string }>('GET', '/api/global-rules/template')).content,
     // Opens a PR that adds .github/sheepdog.yml with this content.
     setup: (repo: string, content: string) => json<PullLink>('POST', `/api/repos/${repo}/setup`, { content }),
     tasks: () => json<RunningTask[]>('GET', '/api/tasks'),

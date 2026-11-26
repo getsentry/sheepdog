@@ -210,9 +210,12 @@ it('shows the setup warning instead of the list, closes the detail, and loads no
   await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: null }))
   const warning = screen.getByRole('region', { name: 'Setup' })
   expect(warning.textContent).toContain(
-    'acme/new has no .github/sheepdog.yml on its default branch main. Sheepdog works only with repositories that have this file.',
+    'acme/new has no .github/sheepdog.yml on its default branch main. Sheepdog works only with repositories that have this file, or with your global rules.',
   )
   expect(within(warning).getByRole('button', { name: 'Create sheepdog.yml' })).toBeTruthy()
+  fireEvent.click(within(warning).getByRole('button', { name: 'Set global rules' }))
+  expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Settings' })).getByRole('button', { name: 'Close' }))
   expect(screen.queryByRole('region', { name: 'safe' })).toBeNull()
   expect(screen.queryByText('No review requests')).toBeNull()
   expect(screen.getByRole('main').textContent).toBe('')
@@ -228,7 +231,7 @@ it('shows the setup warning instead of the list, closes the detail, and loads no
   expect(link.getAttribute('href')).toBe('https://github.com/acme/new/pull/7')
   expect(link.getAttribute('target')).toBe('_blank')
   expect(link.getAttribute('rel')).toBe('noopener noreferrer')
-  expect(within(waiting).queryByRole('button')).toBeNull()
+  expect(within(waiting).getAllByRole('button').map((button) => button.textContent)).toEqual(['Set global rules'])
   expect(sent('GET', '/api/repos/acme/new/classifications')).toHaveLength(0)
 })
 
@@ -511,4 +514,84 @@ it('shows a failed load of the repository settings', async () => {
   expect(within(dialog).queryByRole('switch')).toBeNull()
   expect(within(dialog).queryByRole('status')).toBeNull()
   expect(within(dialog).getByRole('alert').textContent).toBe('Internal server error')
+})
+
+it('shows the list with a short warning for a repository with the global rules', async () => {
+  const { sources, sent } = await signedIn((seen) => {
+    if (seen.path === '/api/repos/acme/new/classifications') return reply(200, [])
+    if (seen.path === '/api/repos/acme/new/pulls/2') return reply(200, pullRequest)
+  })
+  const global = (setup: Setup): Requests => ({
+    ...requests(rows, ['safe']),
+    repo: 'acme/new',
+    fetchedAt: '2027-01-15T08:01:00Z',
+    setup,
+    globalRules: true,
+  })
+  await emit(sources, global({ defaultBranch: 'main', pullRequest: null }))
+  const warning = screen.getByRole('region', { name: 'Setup' })
+  expect(warning.textContent).toContain(
+    'acme/new has no .github/sheepdog.yml on its default branch main. Sheepdog uses your global rules for it, not rules of the repository.',
+  )
+  expect(within(warning).queryByRole('heading')).toBeNull()
+  expect(within(warning).getAllByRole('button').map((button) => button.textContent)).toEqual(['Create sheepdog.yml', 'Edit global rules'])
+  expect(screen.getByRole('region', { name: 'safe' })).toBeTruthy()
+  expect(sent('GET', '/api/repos/acme/new/classifications')).toHaveLength(1)
+
+  await open(2)
+  expect(screen.getByRole('heading', { name: 'PR 2' })).toBeTruthy()
+  await emit(sources, global({ defaultBranch: 'main', pullRequest: { number: 7, url: 'https://github.com/acme/new/pull/7' } }))
+  expect(screen.getByRole('heading', { name: 'PR 2' })).toBeTruthy()
+  expect(screen.getByRole('region', { name: 'Setup' }).textContent).toContain('Sheepdog waits for the merge of pull request #7')
+
+  fireEvent.click(within(screen.getByRole('region', { name: 'Setup' })).getByRole('button', { name: 'Edit global rules' }))
+  expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+})
+
+it('edits the global rules in the settings, starts from the template, and shows a refused save', async () => {
+  let stored = ''
+  const { sent } = await signedIn((seen) => {
+    if (seen.path === '/api/global-rules/template') return reply(200, { content: template })
+    if (seen.path !== '/api/settings') return
+    if (seen.method === 'PUT') {
+      const text = (seen.body as { globalRules: string }).globalRules
+      if (text.includes('version: 2')) return failure(400, 'The global rules are not valid: version must be 1, not 2')
+      stored = text
+    }
+    return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], globalRules: stored })
+  })
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Settings' })))
+  const dialog = screen.getByRole('dialog', { name: 'Settings' })
+  const section = within(dialog).getByRole('region', { name: 'Global rules' })
+  const field = within(section).getByLabelText<HTMLTextAreaElement>('Global rules')
+  const save = within(section).getByRole('button', { name: 'Save' })
+  expect(field.value).toBe('')
+  expect(save.hasAttribute('disabled')).toBe(true)
+
+  await act(async () => {
+    fireEvent.click(within(section).getByRole('button', { name: 'Start from the template' }))
+    await settle()
+  })
+  expect(field.value).toBe(template)
+  expect(within(section).queryByRole('button', { name: 'Start from the template' })).toBeNull()
+  expect(sent('PUT', '/api/settings')).toHaveLength(0)
+
+  fireEvent.change(field, { target: { value: 'version: 2\n' } })
+  await act(async () => {
+    fireEvent.click(save)
+    await settle()
+  })
+  expect(within(dialog).getByText('The global rules are not valid: version must be 1, not 2')).toBeTruthy()
+  expect(field.value).toBe('version: 2\n')
+
+  fireEvent.change(field, { target: { value: template } })
+  await act(async () => {
+    fireEvent.click(save)
+    await settle()
+  })
+  expect(within(section).getByText('Saved')).toBeTruthy()
+  expect(field.value).toBe(template)
+  expect(save.hasAttribute('disabled')).toBe(true)
+  expect(within(dialog).queryByText(/not valid/)).toBeNull()
+  expect(sent('PUT', '/api/settings').map((seen) => seen.body)).toEqual([{ globalRules: 'version: 2\n' }, { globalRules: template }])
 })

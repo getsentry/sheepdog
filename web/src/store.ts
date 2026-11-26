@@ -137,6 +137,11 @@ export function currentRepo(state: State): string {
   return state.requests?.repo ?? state.settings?.repo ?? ''
 }
 
+// True when the repository has neither .github/sheepdog.yml nor global rules, so Sheepdog shows no PRs for it.
+export function hasNoRules(requests: Requests | null): boolean {
+  return Boolean(requests?.setup && !requests.globalRules)
+}
+
 export function isReviewing(state: State, repo: string, number: number): boolean {
   const k = key(repo, number)
   return state.startingReviews.has(k) || state.tasks.some((t) => t.kind === 'review' && t.key.toLowerCase() === k)
@@ -276,7 +281,7 @@ function update(state: State, action: Action): State {
 export function reducer(state: State, action: Action): State {
   const next = update(state, action)
   const otherRepo = currentRepo(next).toLowerCase() !== currentRepo(state).toLowerCase()
-  if (next.selection !== null && (otherRepo || next.requests?.setup)) {
+  if (next.selection !== null && (otherRepo || hasNoRules(next.requests))) {
     return { ...next, selection: null }
   }
   return next
@@ -386,7 +391,7 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
           if (event.type === 'tasks') tasksVersion += 1
           dispatch({ type: 'event', event })
           // The server refuses the classifications of a repository without rules.
-          const repo = event.type === 'requests' && !event.data.setup ? event.data.repo : ''
+          const repo = event.type === 'requests' && !hasNoRules(event.data) ? event.data.repo : ''
           if (repo && repo.toLowerCase() !== classificationsRepo) {
             classificationsRepo = repo.toLowerCase()
             void actions.loadClassifications(repo)
@@ -503,6 +508,24 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
       if (!settings) return false
       set({ settings, models: null, modelsError: null })
       return true
+    },
+
+    // Returns true after a save, so that the field can show it. An empty text deletes the global rules.
+    async saveGlobalRules(globalRules: string): Promise<boolean> {
+      const settings = await call('settingsError', (client) => client.updateSettings({ globalRules }))
+      if (!settings) return false
+      set({ settings })
+      return true
+    },
+
+    // null when the result no longer matters. Throws an ApiError that the settings show.
+    async globalRulesTemplate(): Promise<string | null> {
+      try {
+        return await checked((client) => client.globalRulesTemplate())
+      } catch (error) {
+        if (error instanceof Cancelled) return null
+        throw error
+      }
     },
 
     async selectModel(model: string) {

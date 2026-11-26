@@ -127,13 +127,13 @@ func TestAutoClassifyRunsTwoAtATime(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	h.server.autoClassify(ctx, id, aliceRepo, rows(1, 2, 3))
+	h.server.autoClassify(ctx, id, aliceRepo, rows(1, 2, 3), nil)
 	h.openrouter.waitStarted(t)
 	h.openrouter.waitStarted(t)
 	if keys := running(); !slices.Equal(keys, []string{aliceRepo + "#1", aliceRepo + "#2"}) {
 		t.Fatalf("running %v", keys)
 	}
-	h.server.autoClassify(ctx, id, aliceRepo, rows(1, 2, 3, 4))
+	h.server.autoClassify(ctx, id, aliceRepo, rows(1, 2, 3, 4), nil)
 	if keys := running(); len(keys) != 2 {
 		t.Errorf("running %v, want only two", keys)
 	}
@@ -143,7 +143,7 @@ func TestAutoClassifyRunsTwoAtATime(t *testing.T) {
 		h.openrouter.waitCancelled(t)
 	}
 	// A stopped classification does not start again for the same head commit.
-	h.server.autoClassify(ctx, id, aliceRepo, rows(1, 2, 3))
+	h.server.autoClassify(ctx, id, aliceRepo, rows(1, 2, 3), nil)
 	h.openrouter.waitStarted(t)
 	if keys := running(); !slices.Equal(keys, []string{aliceRepo + "#3"}) {
 		t.Errorf("running %v, want only #3", keys)

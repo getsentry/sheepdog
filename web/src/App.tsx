@@ -5,7 +5,7 @@ import { key } from './logic'
 import { Settings } from './Settings'
 import { Sidebar } from './Sidebar'
 import { SignIn } from './SignIn'
-import { currentRepo } from './store'
+import { currentRepo, hasNoRules } from './store'
 import type { Row } from './types'
 import { Modal, Spinner } from './ui'
 
@@ -45,7 +45,7 @@ function Main() {
         {row ? (
           <Detail key={key(repo, row.number)} repo={repo} row={row} onApproveAndMerge={setBatch} />
         ) : (
-          !state.requests?.setup && <p className="placeholder">Select a pull request</p>
+          !hasNoRules(state.requests) && <p className="placeholder">Select a pull request</p>
         )}
       </main>
       {batch && (

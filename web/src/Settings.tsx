@@ -64,6 +64,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
+      <GlobalRules />
       {state.settingsError && <p className="error">{state.settingsError}</p>}
       <div className="buttons">
         <span className="spacer" />
@@ -93,6 +94,73 @@ export function Settings({ onClose }: { onClose: () => void }) {
         </Modal>
       )}
     </Modal>
+  )
+}
+
+// The field keeps the stored rules until the user edits them.
+function GlobalRules() {
+  const state = useAppState()
+  const { actions } = useStore()
+  const [draft, setDraft] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [templateError, setTemplateError] = useState<string | null>(null)
+  const text = draft ?? state.settings?.globalRules ?? ''
+
+  function edit(value: string) {
+    setDraft(value)
+    setSaved(false)
+  }
+
+  async function save() {
+    if (draft === null || saving) return
+    setSaving(true)
+    if (await actions.saveGlobalRules(draft)) {
+      setDraft(null)
+      setSaved(true)
+    }
+    setSaving(false)
+  }
+
+  async function startFromTemplate() {
+    setTemplateError(null)
+    try {
+      const template = await actions.globalRulesTemplate()
+      if (template !== null) edit(template)
+    } catch (failure) {
+      setTemplateError(failure instanceof Error ? failure.message : String(failure))
+    }
+  }
+
+  return (
+    <section className="global-rules" aria-label="Global rules">
+      <h3>Global rules</h3>
+      <p className="muted">
+        Sheepdog uses these rules for your repositories without <code>.github/sheepdog.yml</code> on the default branch.
+        They have the same form as that file. Leave the field empty to turn them off.
+      </p>
+      <textarea
+        aria-label="Global rules"
+        spellCheck={false}
+        placeholder="No global rules"
+        value={text}
+        disabled={state.settings === null || saving}
+        onChange={(event) => edit(event.target.value)}
+      />
+      {templateError && <p className="error">{templateError}</p>}
+      <div className="buttons">
+        {text === '' && (
+          <button type="button" onClick={() => void startFromTemplate()}>
+            Start from the template
+          </button>
+        )}
+        {saved && <span className="muted">Saved</span>}
+        <span className="spacer" />
+        <button type="button" disabled={draft === null || saving} onClick={() => void save()}>
+          Save
+        </button>
+      </div>
+    </section>
   )
 }
 

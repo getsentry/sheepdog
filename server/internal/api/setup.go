@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"sheepdog/internal/github"
 	"sheepdog/internal/rules"
@@ -14,33 +15,32 @@ const (
 	setupBranch  = "sheepdog/setup"
 	setupMessage = "chore: add Sheepdog rules"
 	setupTitle   = "Add Sheepdog rules"
-	setupBody    = "This pull request adds `.github/sheepdog.yml`, the rules file of Sheepdog. Sheepdog works only with repositories " +
-		"that have this file on the default branch. After the merge, Sheepdog shows the review requests of this repository and sorts them into the lanes of the file."
+	setupBody    = "This pull request adds `.github/sheepdog.yml`, the rules file of Sheepdog for this repository. " +
+		"After the merge, Sheepdog sorts the review requests of this repository into the lanes of this file for every user, instead of the global rules of each user."
 	docsURL = "https://github.com/getsentry/sheepdog/blob/main/server/README.md"
 )
 
-// rulesTemplate is a rules file for a new repository. Without a model, the classification block is a comment.
-func rulesTemplate(model string) string {
-	classification := `# The OpenRouter model for every classification of this repository. Set a model and remove the # signs.
-# classification:
-#   model: anthropic/claude-sonnet-4.5
-#   # To classify every pull request in CI, add the Sheepdog workflow as .github/workflows/sheepdog.yml
-#   # and the secret OPENROUTER_API_KEY, and then set ci: true. See ` + docsURL + `#classification-in-ci
-#   ci: false
+// rulesTemplate is a rules file for a new repository, or the global rules of a user. Without a model, the classification block is a comment.
+// The global rules have no CI comment, because the CI workflow belongs to a repository.
+func rulesTemplate(model string, global bool) string {
+	header := `# Rules for Sheepdog for this repository. Without this file, Sheepdog uses the global rules of each user, if the user has them.
+# Sheepdog reads the lanes from the base branch of each pull request, so a pull request cannot change its own lane.
 `
-	if model != "" {
-		quoted, _ := json.Marshal(model)
-		classification = `# The OpenRouter model for every classification of this repository.
-classification:
-  model: ` + string(quoted) + `
-  # To classify every pull request in CI, add the Sheepdog workflow as .github/workflows/sheepdog.yml
-  # and the secret OPENROUTER_API_KEY, and then set ci: true. See ` + docsURL + `#classification-in-ci
+	scope, ci := "this repository", `  # To classify every pull request in CI, add the Sheepdog workflow as .github/workflows/sheepdog.yml
+  # and the secret OPENROUTER_API_KEY, and then set ci: true. See `+docsURL+`#classification-in-ci
   ci: false
 `
+	if global {
+		header = "# Global rules for Sheepdog. Sheepdog uses them for your repositories without .github/sheepdog.yml on the default branch.\n"
+		scope, ci = "a repository with these rules", ""
 	}
-	return `# Rules for Sheepdog. Sheepdog works only with repositories that have this file on the default branch.
-# Sheepdog reads the lanes from the base branch of each pull request, so a pull request cannot change its own lane.
-# A pull request goes to the first lane whose conditions all match. Every other pull request needs a manual review.
+	classification := "# The OpenRouter model for every classification of " + scope + ". Set a model and remove the # signs.\n# classification:\n#   model: anthropic/claude-sonnet-4.5\n" +
+		strings.ReplaceAll(ci, "  ", "#   ")
+	if model != "" {
+		quoted, _ := json.Marshal(model)
+		classification = "# The OpenRouter model for every classification of " + scope + ".\nclassification:\n  model: " + string(quoted) + "\n" + ci
+	}
+	return header + `# A pull request goes to the first lane whose conditions all match. Every other pull request needs a manual review.
 # See ` + docsURL + `#review-lanes
 version: 1
 
@@ -65,7 +65,11 @@ func (s *Server) setupTemplate(w http.ResponseWriter, r *http.Request, user stor
 	if _, ok := repoPath(w, r); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"content": rulesTemplate(user.Model)})
+	writeJSON(w, http.StatusOK, map[string]string{"content": rulesTemplate(user.Model, false)})
+}
+
+func (s *Server) globalRulesTemplate(w http.ResponseWriter, _ *http.Request, user store.User) {
+	writeJSON(w, http.StatusOK, map[string]string{"content": rulesTemplate(user.Model, true)})
 }
 
 // setUp opens a PR that adds the rules file, because rulesets often block a direct commit to the default branch.

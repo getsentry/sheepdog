@@ -11,6 +11,8 @@ export interface Settings {
   hasOpenRouterKey: boolean
   // The starred repositories in lower case and in name order.
   starred: string[]
+  // The rules for repositories without .github/sheepdog.yml, or "" without them.
+  globalRules: string
 }
 
 // The settings of the user for one repository in lower case.
@@ -29,6 +31,8 @@ export interface SettingsUpdate {
   repo?: string
   model?: string
   openRouterKey?: string
+  // An empty text deletes the global rules.
+  globalRules?: string
 }
 
 export const manualLane = 'manual'
@@ -77,8 +81,10 @@ export interface Requests {
   defaultBranch?: string
   rulesError?: string
   error?: string
-  // Set only when the default branch has no .github/sheepdog.yml. Then rows and lanes are empty.
+  // Set only when the default branch has no .github/sheepdog.yml. Without global rules, rows and lanes are then empty.
   setup?: Setup
+  // True when the lanes come from the global rules of the user, because the default branch has no .github/sheepdog.yml.
+  globalRules?: boolean
 }
 
 export interface PullLink {

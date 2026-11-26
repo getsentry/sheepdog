@@ -12,6 +12,7 @@ import (
 
 	"sheepdog/internal/github"
 	"sheepdog/internal/openrouter"
+	"sheepdog/internal/rules"
 	"sheepdog/internal/store"
 	"sheepdog/internal/tasks"
 )
@@ -129,6 +130,8 @@ type settingsResponse struct {
 	Model            string   `json:"model"`
 	HasOpenRouterKey bool     `json:"hasOpenRouterKey"`
 	Starred          []string `json:"starred"`
+	// GlobalRules is the rules file text for repositories without .github/sheepdog.yml, or "" without one.
+	GlobalRules string `json:"globalRules"`
 }
 
 func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -137,7 +140,14 @@ func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user stor
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, settingsResponse{Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred})
+	globalRules, err := s.store.GlobalRules(r.Context(), user.ID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settingsResponse{
+		Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred, GlobalRules: globalRules,
+	})
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -149,9 +159,20 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 		Repo          *string `json:"repo"`
 		Model         *string `json:"model"`
 		OpenRouterKey *string `json:"openRouterKey"`
+		// An empty text deletes the global rules.
+		GlobalRules *string `json:"globalRules"`
 	}
 	if !readJSON(w, r, &body) {
 		return
+	}
+	if body.GlobalRules != nil && strings.TrimSpace(*body.GlobalRules) == "" {
+		*body.GlobalRules = ""
+	}
+	if body.GlobalRules != nil && *body.GlobalRules != "" {
+		if _, err := rules.Parse([]byte(*body.GlobalRules)); err != nil {
+			writeError(w, http.StatusBadRequest, "The global rules are not valid: "+err.Error())
+			return
+		}
 	}
 	for _, field := range []*string{body.Repo, body.Model, body.OpenRouterKey} {
 		if field != nil {
@@ -176,11 +197,19 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 		internalError(w, err)
 		return
 	}
+	if body.GlobalRules != nil {
+		if err := s.store.SetGlobalRules(r.Context(), user.ID, *body.GlobalRules); err != nil {
+			internalError(w, err)
+			return
+		}
+	}
 	if body.Repo != nil && *body.Repo != user.Repo {
 		if err := s.restartPoll(user.ID); err != nil {
 			internalError(w, err)
 			return
 		}
+	} else if body.GlobalRules != nil {
+		s.pollNow(user.ID)
 	}
 	updated, err := s.store.User(r.Context(), user.ID)
 	if err != nil {
@@ -376,8 +405,15 @@ func (s *Server) missingRules(ctx context.Context, client *github.Client, userID
 	return missingOn, nil
 }
 
-// requireRules writes 409 when the default branch of the repository has no rules file. It uses an answer of the last 30 seconds.
+// requireRules writes 409 when the repository has neither a rules file on its default branch nor global rules of the user.
 func (s *Server) requireRules(w http.ResponseWriter, r *http.Request, user store.User, repo string) bool {
+	_, ok := s.repoRules(w, r, user, repo)
+	return ok
+}
+
+// repoRules returns the global rules of the user when the default branch has no rules file, and nil when it has one.
+// It writes 409 when there are no rules at all. It uses a check of the default branch of the last 30 seconds.
+func (s *Server) repoRules(w http.ResponseWriter, r *http.Request, user store.User, repo string) (*rules.Rules, bool) {
 	s.mu.Lock()
 	check, ok := s.rulesChecks[rulesKey{user.ID, repo}]
 	s.mu.Unlock()
@@ -386,14 +422,35 @@ func (s *Server) requireRules(w http.ResponseWriter, r *http.Request, user store
 		var err error
 		if missingOn, err = s.missingRules(r.Context(), github.New(s.cfg.GitHubURL, user.GitHubToken), user.ID, repo); err != nil {
 			githubError(w, err)
-			return false
+			return nil, false
 		}
 	}
-	if missingOn != "" {
-		writeError(w, http.StatusConflict, fmt.Sprintf("%s has no %s on %s. Set it up first", repo, github.RulesPath, missingOn))
-		return false
+	if missingOn == "" {
+		return nil, true
 	}
-	return true
+	global, err := s.globalRules(r.Context(), user.ID)
+	if err != nil {
+		internalError(w, err)
+		return nil, false
+	}
+	if global == nil {
+		writeError(w, http.StatusConflict, fmt.Sprintf("%s has no %s on %s. Set it up first, or set global rules in Settings", repo, github.RulesPath, missingOn))
+		return nil, false
+	}
+	return global, true
+}
+
+// globalRules returns the global rules of the user, or nil without them. The server checks them before it stores them.
+func (s *Server) globalRules(ctx context.Context, userID int64) (*rules.Rules, error) {
+	text, err := s.store.GlobalRules(ctx, userID)
+	if err != nil || text == "" {
+		return nil, err
+	}
+	parsed, err := rules.Parse([]byte(text))
+	if err != nil {
+		return nil, fmt.Errorf("the global rules are not valid: %w", err)
+	}
+	return &parsed, nil
 }
 
 func (s *Server) pullRequest(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -485,14 +542,18 @@ func (s *Server) getClassification(w http.ResponseWriter, r *http.Request, user 
 
 func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok || !s.requireRules(w, r, user, repo) {
+	if !ok {
+		return
+	}
+	global, ok := s.repoRules(w, r, user, repo)
+	if !ok {
 		return
 	}
 	if user.OpenRouterKey == "" || user.Model == "" {
 		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
 		return
 	}
-	task, err := s.tasks.Start(user.ID, s.classifyWork(user, repo, number))
+	task, err := s.tasks.Start(user.ID, s.classifyWork(user, repo, number, global))
 	if errors.Is(err, tasks.ErrRunning) {
 		writeError(w, http.StatusConflict, "A classification of this pull request is already running")
 		return
@@ -501,14 +562,19 @@ func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, use
 }
 
 // classifyWork polls at once after a stored classification, so that the lane changes without a wait.
-func (s *Server) classifyWork(user store.User, repo string, number int) tasks.ClassifyWork {
+// For a repository with the global rules, classification.model of the global rules replaces the model of the user.
+func (s *Server) classifyWork(user store.User, repo string, number int, global *rules.Rules) tasks.ClassifyWork {
+	model := user.Model
+	if global != nil && global.Classification.Model != "" {
+		model = global.Classification.Model
+	}
 	return tasks.ClassifyWork{
 		Store:      s.store,
 		GitHub:     github.New(s.cfg.GitHubURL, user.GitHubToken),
 		OpenRouter: openrouter.New(s.cfg.OpenRouterURL, user.OpenRouterKey),
 		UserID:     user.ID,
 		Login:      user.Login,
-		Model:      user.Model,
+		Model:      model,
 		Repo:       repo,
 		Number:     number,
 		Publish: func(e tasks.ClassificationEvent) {
