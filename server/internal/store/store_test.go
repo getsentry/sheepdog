@@ -638,53 +638,63 @@ func TestOpenAddsStarsToAnOlderDatabase(t *testing.T) {
 	}
 }
 
-func TestPrefsByUser(t *testing.T) {
+func TestPrefsByUserAndRepo(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	ctx := context.Background()
 	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
 	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
-	prefs := func(user int64) Prefs {
+	prefs := func(user int64, repo string) Prefs {
 		t.Helper()
-		p, err := s.Prefs(ctx, user)
+		p, err := s.Prefs(ctx, user, repo)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return p
 	}
-	update := func(settings Settings) {
+	update := func(user int64, repo string, u PrefsUpdate) {
 		t.Helper()
-		if err := s.UpdateSettings(ctx, alice, settings); err != nil {
+		if err := s.UpdatePrefs(ctx, user, repo, u); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if p := prefs(alice); p != (Prefs{AutoRefresh: true}) {
+	defaults := Prefs{AutoRefresh: true}
+	if p := prefs(alice, "acme/app"); p != defaults {
 		t.Errorf("prefs without a stored row %+v", p)
 	}
 	off, on := false, true
-	update(Settings{AutoClassify: &on})
-	if p := prefs(alice); p != (Prefs{AutoRefresh: true, AutoClassify: true}) {
+	update(alice, "acme/app", PrefsUpdate{AutoClassify: &on})
+	if p := prefs(alice, "acme/app"); p != (Prefs{AutoRefresh: true, AutoClassify: true}) {
 		t.Errorf("prefs after auto classify on %+v", p)
 	}
-	update(Settings{AutoRefresh: &off})
-	if p := prefs(alice); p != (Prefs{AutoClassify: true}) {
+	update(alice, "acme/app", PrefsUpdate{AutoRefresh: &off})
+	if p := prefs(alice, "acme/app"); p != (Prefs{AutoClassify: true}) {
 		t.Errorf("prefs after auto refresh off %+v", p)
 	}
-	if p := prefs(bob); p != (Prefs{AutoRefresh: true}) {
+	if p := prefs(alice, "acme/web"); p != defaults {
+		t.Errorf("prefs of another repository %+v", p)
+	}
+	if p := prefs(bob, "acme/app"); p != defaults {
 		t.Errorf("bob prefs %+v", p)
 	}
-	repo := "acme/app"
-	update(Settings{Repo: &repo})
-	update(Settings{AutoRefresh: &on, AutoClassify: &off})
-	if p := prefs(alice); p != (Prefs{AutoRefresh: true}) {
+	update(bob, "acme/app", PrefsUpdate{AutoRefresh: &off})
+	update(alice, "acme/app", PrefsUpdate{AutoRefresh: &on, AutoClassify: &off})
+	update(alice, "acme/web", PrefsUpdate{})
+	if p := prefs(alice, "acme/app"); p != defaults {
 		t.Errorf("prefs after both changes %+v", p)
+	}
+	if p := prefs(bob, "acme/app"); p != (Prefs{}) {
+		t.Errorf("bob prefs after the changes of alice %+v", p)
+	}
+	if p := prefs(alice, "acme/web"); p != defaults {
+		t.Errorf("prefs after an empty update %+v", p)
 	}
 
 	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, alice); err != nil {
 		t.Fatal(err)
 	}
 	var rows int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prefs`).Scan(&rows); err != nil || rows != 0 {
-		t.Errorf("%d preference rows after the delete of alice, %v", rows, err)
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM repo_prefs`).Scan(&rows); err != nil || rows != 1 {
+		t.Errorf("%d preference rows after the delete of alice, %v; want only the row of bob", rows, err)
 	}
 }
 
@@ -697,54 +707,20 @@ func TestOpenAddsPreferencesToAnOlderDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
-	if _, err := s.db.Exec(`DROP TABLE user_prefs`); err != nil {
+	if _, err := s.db.Exec(`DROP TABLE repo_prefs`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
 
 	s = openStore(t, path, key)
-	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{AutoRefresh: true}) {
+	if p, err := s.Prefs(ctx, alice, "acme/app"); err != nil || p != (Prefs{AutoRefresh: true}) {
 		t.Errorf("prefs of the older database = %+v, %v", p, err)
 	}
 	off := false
-	if err := s.UpdateSettings(ctx, alice, Settings{AutoRefresh: &off}); err != nil {
+	if err := s.UpdatePrefs(ctx, alice, "acme/app", PrefsUpdate{AutoRefresh: &off}); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{}) {
+	if p, err := s.Prefs(ctx, alice, "acme/app"); err != nil || p != (Prefs{}) {
 		t.Errorf("prefs after the change = %+v, %v", p, err)
-	}
-}
-
-func TestOpenAddsAutoClassifyToOlderPrefs(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "test.db")
-	key := newKey(t)
-	ctx := context.Background()
-	s, err := Open(path, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
-	if _, err := s.db.Exec(`DROP TABLE user_prefs;
-		CREATE TABLE user_prefs (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, auto_refresh INTEGER NOT NULL);
-		INSERT INTO user_prefs (user_id, auto_refresh) VALUES (1, 0)`); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-
-	s = openStore(t, path, key)
-	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{}) {
-		t.Errorf("prefs of the older table = %+v, %v; want the stored auto refresh off", p, err)
-	}
-	on := true
-	if err := s.UpdateSettings(ctx, alice, Settings{AutoClassify: &on}); err != nil {
-		t.Fatal(err)
-	}
-	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{AutoClassify: true}) {
-		t.Errorf("prefs after auto classify on = %+v, %v", p, err)
-	}
-	s.Close()
-	s = openStore(t, path, key)
-	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{AutoClassify: true}) {
-		t.Errorf("prefs after a second open = %+v, %v", p, err)
 	}
 }

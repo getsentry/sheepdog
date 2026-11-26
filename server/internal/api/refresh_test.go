@@ -29,20 +29,23 @@ func (h *harness) stablePolls(token, state string) int {
 	return before
 }
 
+// repoSettings changes the settings of the user for the repository and returns the answer.
+func (h *harness) repoSettings(session, repo string, body map[string]bool) repoSettingsResponse {
+	h.t.Helper()
+	var got repoSettingsResponse
+	h.json("PUT", "/api/repos/"+repo+"/settings", session, body, http.StatusOK, &got)
+	return got
+}
+
 func TestAutoRefreshOffStopsOnlyTimerPolls(t *testing.T) {
 	h := newHarness(t, nil)
 	alice, bob := h.signIn(aliceToken), h.signIn(bobToken)
-	var settings settingsResponse
-	h.json("PUT", "/api/settings", alice, map[string]bool{"autoRefresh": false}, http.StatusOK, &settings)
-	if settings.AutoRefresh {
-		t.Fatal("the answer has auto refresh on")
+	if got := h.repoSettings(alice, "GetSentry/Alice-Repo", map[string]bool{"autoRefresh": false}); got != (repoSettingsResponse{Repo: aliceRepo}) {
+		t.Fatalf("the answer %+v", got)
 	}
 	h.json("PUT", "/api/settings", bob, map[string]string{"repo": bobRepo}, http.StatusOK, nil)
 
-	h.json("PUT", "/api/settings", alice, map[string]string{"repo": aliceRepo}, http.StatusOK, &settings)
-	if settings.AutoRefresh || settings.Repo != aliceRepo {
-		t.Fatalf("settings after the repository %+v", settings)
-	}
+	h.json("PUT", "/api/settings", alice, map[string]string{"repo": aliceRepo}, http.StatusOK, nil)
 	h.waitPolls(aliceToken, 1)
 	polls := h.stablePolls(aliceToken, "after the repository selection")
 	if h.github.pollCount(bobToken) < 3 {
@@ -53,12 +56,12 @@ func TestAutoRefreshOffStopsOnlyTimerPolls(t *testing.T) {
 	h.waitPolls(aliceToken, polls+1)
 	polls = h.stablePolls(aliceToken, "after a refresh")
 
-	h.json("GET", "/api/settings", alice, nil, http.StatusOK, &settings)
-	if settings.AutoRefresh {
+	var got repoSettingsResponse
+	h.json("GET", "/api/repos/"+aliceRepo+"/settings", alice, nil, http.StatusOK, &got)
+	if got.AutoRefresh {
 		t.Error("GET has auto refresh on")
 	}
-	h.json("PUT", "/api/settings", alice, map[string]bool{"autoRefresh": true}, http.StatusOK, &settings)
-	if !settings.AutoRefresh {
+	if got := h.repoSettings(alice, aliceRepo, map[string]bool{"autoRefresh": true}); !got.AutoRefresh {
 		t.Error("the answer has auto refresh off")
 	}
 	h.waitPolls(aliceToken, polls+3)
@@ -67,25 +70,51 @@ func TestAutoRefreshOffStopsOnlyTimerPolls(t *testing.T) {
 	}
 }
 
+func TestAutoRefreshBelongsToTheRepository(t *testing.T) {
+	h := newHarness(t, nil)
+	alice := h.signIn(aliceToken)
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoRefresh": false})
+	h.json("PUT", "/api/settings", alice, map[string]string{"repo": "getsentry/sentry-cocoa"}, http.StatusOK, nil)
+	h.waitPolls(aliceToken, 3)
+	var got repoSettingsResponse
+	h.json("GET", "/api/repos/getsentry/sentry-cocoa/settings", alice, nil, http.StatusOK, &got)
+	if got != (repoSettingsResponse{Repo: "getsentry/sentry-cocoa", AutoRefresh: true}) {
+		t.Errorf("settings of another repository %+v", got)
+	}
+
+	polls := h.github.pollCount(aliceToken)
+	h.json("PUT", "/api/settings", alice, map[string]string{"repo": aliceRepo}, http.StatusOK, nil)
+	h.waitPolls(aliceToken, polls+1)
+	h.stablePolls(aliceToken, "back in the repository without auto refresh")
+}
+
 func TestTurningAutoRefreshOnPollsAtOnce(t *testing.T) {
 	h := newHarness(t, func(s *Server) { s.pollInterval = time.Hour })
 	alice := h.signIn(aliceToken)
-	h.json("PUT", "/api/settings", alice, map[string]any{"repo": aliceRepo, "autoRefresh": false}, http.StatusOK, nil)
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoRefresh": false})
+	h.json("PUT", "/api/settings", alice, map[string]string{"repo": aliceRepo}, http.StatusOK, nil)
 	h.waitPolls(aliceToken, 1)
-	h.json("PUT", "/api/settings", alice, map[string]bool{"autoRefresh": true}, http.StatusOK, nil)
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoRefresh": true})
 	h.waitPolls(aliceToken, 2)
-	// A setting that does not change polls not again.
-	h.json("PUT", "/api/settings", alice, map[string]bool{"autoRefresh": true}, http.StatusOK, nil)
+	// A setting that does not change, and a setting of another repository, poll not again.
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoRefresh": true})
+	h.repoSettings(alice, bobRepo, map[string]bool{"autoRefresh": false})
+	h.repoSettings(alice, bobRepo, map[string]bool{"autoRefresh": true})
 	time.Sleep(100 * time.Millisecond)
 	if n := h.github.pollCount(aliceToken); n != 2 {
 		t.Errorf("%d polls, want 2", n)
 	}
+	if got := h.repoSettings(alice, noRulesRepo, map[string]bool{"autoClassify": true}); !got.AutoClassify || !got.AutoRefresh {
+		t.Errorf("settings of a repository without rules %+v", got)
+	}
+	h.wantError("PUT", "/api/repos/get%20sentry/x/settings", alice, map[string]bool{"autoRefresh": true}, http.StatusBadRequest, `invalid repository name "get sentry/x"`)
 }
 
 func TestRefreshCoalesces(t *testing.T) {
 	h := newHarness(t, nil)
 	alice := h.signIn(aliceToken)
-	h.json("PUT", "/api/settings", alice, map[string]any{"repo": aliceRepo, "autoRefresh": false}, http.StatusOK, nil)
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoRefresh": false})
+	h.json("PUT", "/api/settings", alice, map[string]string{"repo": aliceRepo}, http.StatusOK, nil)
 	h.waitPolls(aliceToken, 1)
 	polls := h.stablePolls(aliceToken, "before the refresh")
 

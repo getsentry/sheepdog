@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { useAppState, useStore } from './context'
 import { dangerTone, elapsed, relativeTime } from './format'
 import { isOutdated, key, laneSections, shownClassification, starredFirst, type LaneSection } from './logic'
+import { RepoSettings } from './RepoSettings'
 import { currentRepo, isMerging, isSettingUp, isStarred } from './store'
-import type { Preference, PullLink, Row, Setup } from './types'
+import type { PullLink, Row, Setup } from './types'
 import {
   Capsule,
   ExternalLink,
@@ -12,6 +13,7 @@ import {
   RefreshIcon,
   SearchList,
   SheepIcon,
+  SlidersIcon,
   Spinner,
   StarIcon,
   StopIcon,
@@ -62,7 +64,7 @@ export function Sidebar({
       </div>
       <footer>
         {state.tasks.length > 0 && <TaskPanel />}
-        {repo !== '' && <RefreshBar />}
+        {repo !== '' && <RefreshBar repo={repo} />}
         <button type="button" className="borderless" onClick={onOpenSettings}>
           <GearIcon /> Settings
         </button>
@@ -407,11 +409,11 @@ function RowView({
   )
 }
 
-function RefreshBar() {
+function RefreshBar({ repo }: { repo: string }) {
   const state = useAppState()
   const { actions } = useStore()
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const fetchedAt = state.requests?.fetchedAt
-  const settings = state.settings
   return (
     <section className="refresh" aria-label="Updates">
       <div className="refresh-bar">
@@ -431,35 +433,17 @@ function RefreshBar() {
           {state.refreshing ? <Spinner label="Refreshing" /> : <RefreshIcon />}
         </button>
         <span className="spacer" />
-        <Switch name="autoRefresh" label="Auto-refresh" />
-        <Switch name="autoClassify" label="Auto-classify" />
+        <button type="button" className="borderless small" onClick={() => setSettingsOpen(true)}>
+          <SlidersIcon /> Repository settings
+        </button>
       </div>
-      {settings?.autoClassify && (!settings.hasOpenRouterKey || !settings.model) && (
-        <p className="muted">Auto-classify needs an OpenRouter API key and a model in Settings.</p>
-      )}
-      {state.footerError && (
+      {state.refreshError && (
         <p className="error" role="alert">
-          {state.footerError}
+          {state.refreshError}
         </p>
       )}
+      {settingsOpen && <RepoSettings repo={repo} onClose={() => setSettingsOpen(false)} />}
     </section>
-  )
-}
-
-function Switch({ name, label }: { name: Preference; label: string }) {
-  const state = useAppState()
-  const { actions } = useStore()
-  return (
-    <label className="switch">
-      <input
-        type="checkbox"
-        role="switch"
-        checked={state.settings?.[name] ?? false}
-        disabled={state.settings === null}
-        onChange={(event) => void actions.setPreference(name, event.target.checked)}
-      />
-      {label}
-    </label>
   )
 }
 

@@ -129,8 +129,6 @@ type settingsResponse struct {
 	Model            string   `json:"model"`
 	HasOpenRouterKey bool     `json:"hasOpenRouterKey"`
 	Starred          []string `json:"starred"`
-	AutoRefresh      bool     `json:"autoRefresh"`
-	AutoClassify     bool     `json:"autoClassify"`
 }
 
 func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -139,15 +137,7 @@ func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user stor
 		internalError(w, err)
 		return
 	}
-	prefs, err := s.store.Prefs(r.Context(), user.ID)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, settingsResponse{
-		Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred,
-		AutoRefresh: prefs.AutoRefresh, AutoClassify: prefs.AutoClassify,
-	})
+	writeJSON(w, http.StatusOK, settingsResponse{Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred})
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -159,8 +149,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 		Repo          *string `json:"repo"`
 		Model         *string `json:"model"`
 		OpenRouterKey *string `json:"openRouterKey"`
-		AutoRefresh   *bool   `json:"autoRefresh"`
-		AutoClassify  *bool   `json:"autoClassify"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -179,19 +167,10 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 			return
 		}
 	}
-	before, err := s.store.Prefs(r.Context(), user.ID)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	turnedOn := body.AutoRefresh != nil && *body.AutoRefresh && !before.AutoRefresh ||
-		body.AutoClassify != nil && *body.AutoClassify && !before.AutoClassify
-	err = s.store.UpdateSettings(r.Context(), user.ID, store.Settings{
+	err := s.store.UpdateSettings(r.Context(), user.ID, store.Settings{
 		Repo:          body.Repo,
 		Model:         body.Model,
 		OpenRouterKey: body.OpenRouterKey,
-		AutoRefresh:   body.AutoRefresh,
-		AutoClassify:  body.AutoClassify,
 	})
 	if err != nil {
 		internalError(w, err)
@@ -202,8 +181,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 			internalError(w, err)
 			return
 		}
-	} else if turnedOn {
-		s.pollNow(user.ID)
 	}
 	updated, err := s.store.User(r.Context(), user.ID)
 	if err != nil {
@@ -211,6 +188,49 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 		return
 	}
 	s.writeSettings(w, r, updated)
+}
+
+type repoSettingsResponse struct {
+	Repo         string `json:"repo"`
+	AutoRefresh  bool   `json:"autoRefresh"`
+	AutoClassify bool   `json:"autoClassify"`
+}
+
+// repoSettings reads the switches of the user for the repository, and PUT changes them first.
+// They need no rules file, so that a repository in the setup state keeps its settings.
+func (s *Server) repoSettings(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, ok := repoPath(w, r)
+	if !ok {
+		return
+	}
+	before, err := s.store.Prefs(r.Context(), user.ID, repo)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	prefs := before
+	if r.Method == http.MethodPut {
+		var body struct {
+			AutoRefresh  *bool `json:"autoRefresh"`
+			AutoClassify *bool `json:"autoClassify"`
+		}
+		if !readJSON(w, r, &body) {
+			return
+		}
+		if err := s.store.UpdatePrefs(r.Context(), user.ID, repo, store.PrefsUpdate{AutoRefresh: body.AutoRefresh, AutoClassify: body.AutoClassify}); err != nil {
+			internalError(w, err)
+			return
+		}
+		if prefs, err = s.store.Prefs(r.Context(), user.ID, repo); err != nil {
+			internalError(w, err)
+			return
+		}
+		// A switch that turns on for the selected repository checks GitHub at once.
+		if repo == user.Repo && (prefs.AutoRefresh && !before.AutoRefresh || prefs.AutoClassify && !before.AutoClassify) {
+			s.pollNow(user.ID)
+		}
+	}
+	writeJSON(w, http.StatusOK, repoSettingsResponse{Repo: repo, AutoRefresh: prefs.AutoRefresh, AutoClassify: prefs.AutoClassify})
 }
 
 // star adds a star for PUT and removes it for DELETE, and returns the settings. Stars need no rules file, because they are not PR work.

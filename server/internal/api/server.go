@@ -141,6 +141,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.getClassification))
 	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.startClassification))
 	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge", s.authed(s.approveAndMerge))
+	mux.HandleFunc("GET /api/repos/{owner}/{name}/settings", s.authed(s.repoSettings))
+	mux.HandleFunc("PUT /api/repos/{owner}/{name}/settings", s.authed(s.repoSettings))
 	mux.HandleFunc("PUT /api/repos/{owner}/{name}/star", s.authed(s.star))
 	mux.HandleFunc("DELETE /api/repos/{owner}/{name}/star", s.authed(s.star))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/setup/template", s.authed(s.setupTemplate))

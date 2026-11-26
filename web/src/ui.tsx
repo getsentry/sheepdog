@@ -120,6 +120,31 @@ export function SearchList({
   )
 }
 
+export function Switch({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  disabled?: boolean
+  onChange?: (on: boolean) => void
+}) {
+  return (
+    <label className="switch">
+      <input
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange?.(event.target.checked)}
+      />
+      {label}
+    </label>
+  )
+}
+
 export function GearIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -141,6 +166,18 @@ export function StarIcon({ filled }: { filled: boolean }) {
         strokeLinejoin="round"
         d="m12 3.2 2.7 5.5 6 .9-4.3 4.2 1 6-5.4-2.8-5.4 2.8 1-6-4.3-4.2 6-.9Z"
       />
+    </svg>
+  )
+}
+
+export function SlidersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+        <circle cx="15" cy="7" r="2" />
+        <circle cx="9" cy="17" r="2" />
+      </g>
     </svg>
   )
 }

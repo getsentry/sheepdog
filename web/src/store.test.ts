@@ -7,7 +7,7 @@ import { approveAndMergeAction, type Classification, type Review, type RunningTa
 
 const notAllowed = 'This GitHub account is not allowed on this server'
 const badSession = 'The session is not valid. Sign in again'
-const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: true, autoClassify: false }
+const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [] }
 
 const task: RunningTask = {
   id: 'T1',
@@ -667,45 +667,72 @@ describe('store', () => {
     fails = true
     await s.actions.refresh()
     expect(s.state().refreshing).toBe(false)
-    expect(s.state().footerError).toBe('Select a repository first')
+    expect(s.state().refreshError).toBe('Select a repository first')
     fails = false
     const again = s.actions.refresh()
-    expect(s.state().footerError).toBeNull()
+    expect(s.state().refreshError).toBeNull()
     await again
     expect(s.paths('/refresh')).toHaveLength(3)
   })
 
-  it('changes a switch at once, sends one request for a double change, and puts it back with the error of the server', async () => {
+  it('loads the settings of a repository, changes a switch at once, and puts it back with the error of the server', async () => {
     const gate = new Gate()
     let fails = false
     const s = await signedIn(async ({ method, path }) => {
-      if (method !== 'PUT' || path !== '/api/settings') return undefined
+      if (path === '/api/repos/acme/app/settings' && method === 'GET') {
+        return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false })
+      }
+      if (path !== '/api/repos/acme/app/settings') return undefined
       await gate.wait()
-      return fails ? failure(500, 'Internal server error') : reply(200, settings)
+      return fails ? failure(500, 'Internal server error') : reply(200, { repo: 'acme/app', autoRefresh: false, autoClassify: true })
     })
-    await settle()
-    const off = s.actions.setPreference('autoRefresh', false)
-    const classify = s.actions.setPreference('autoClassify', true)
-    expect(s.state().settings).toMatchObject({ autoRefresh: false, autoClassify: true })
-    await s.actions.setPreference('autoRefresh', true)
+    await s.actions.setRepoPreference('autoRefresh', false)
+    expect(s.server.seen.filter((seen) => seen.method === 'PUT')).toHaveLength(0)
+    await s.actions.loadRepoSettings('ACME/App')
+    expect(s.state().repoSettings).toEqual({ repo: 'acme/app', autoRefresh: true, autoClassify: false })
+
+    const off = s.actions.setRepoPreference('autoRefresh', false)
+    const classify = s.actions.setRepoPreference('autoClassify', true)
+    expect(s.state().repoSettings).toMatchObject({ autoRefresh: false, autoClassify: true })
+    await s.actions.setRepoPreference('autoRefresh', true)
+    // A load while a change runs keeps the value of the change.
+    await s.actions.loadRepoSettings('acme/app')
+    expect(s.state().repoSettings).toMatchObject({ autoRefresh: false, autoClassify: true })
     gate.open()
     await Promise.all([off, classify])
-    expect(s.state().settings).toMatchObject({ autoRefresh: false, autoClassify: true })
     expect(s.state().savingPreferences.size).toBe(0)
 
     fails = true
-    await s.actions.setPreference('autoRefresh', true)
-    expect(s.state().settings).toMatchObject({ autoRefresh: false, autoClassify: true })
-    expect(s.state().footerError).toBe('Internal server error')
-    await s.actions.setPreference('autoClassify', false)
-    expect(s.state().settings?.autoClassify).toBe(true)
+    await s.actions.setRepoPreference('autoRefresh', true)
+    expect(s.state().repoSettings).toMatchObject({ autoRefresh: false, autoClassify: true })
+    expect(s.state().repoSettingsError).toBe('Internal server error')
     expect(s.state().savingPreferences.size).toBe(0)
     expect(s.server.seen.filter((seen) => seen.method === 'PUT').map((seen) => seen.body)).toEqual([
       { autoRefresh: false },
       { autoClassify: true },
       { autoRefresh: true },
-      { autoClassify: false },
     ])
+  })
+
+  it('shows no settings of another repository, also when its load answers late', async () => {
+    const gate = new Gate()
+    const s = await signedIn(async ({ path }) => {
+      if (path === '/api/repos/acme/web/settings') return reply(200, { repo: 'acme/web', autoRefresh: false, autoClassify: true })
+      if (path !== '/api/repos/acme/app/settings') return undefined
+      await gate.wait()
+      return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false })
+    })
+    const app = s.actions.loadRepoSettings('acme/app')
+    await s.actions.loadRepoSettings('acme/web')
+    expect(s.state().repoSettings).toEqual({ repo: 'acme/web', autoRefresh: false, autoClassify: true })
+    gate.open()
+    await app
+    expect(s.state().repoSettings).toEqual({ repo: 'acme/web', autoRefresh: false, autoClassify: true })
+
+    const late = s.actions.loadRepoSettings('acme/app')
+    expect(s.state().repoSettings).toBeNull()
+    await late
+    expect(s.state().repoSettings?.repo).toBe('acme/app')
   })
 
   it('closes the open PR when the repository changes', async () => {

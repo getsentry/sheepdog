@@ -358,9 +358,8 @@ a {
 
 .refresh-bar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
+  gap: 4px;
   min-height: 26px;
 }
 
@@ -408,6 +407,26 @@ a {
 
 .switch input:disabled {
   opacity: 0.5;
+}
+
+.switch:has(input:disabled) {
+  color: var(--muted);
+  cursor: default;
+}
+
+.repo-settings section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.repo-settings h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .section-header {

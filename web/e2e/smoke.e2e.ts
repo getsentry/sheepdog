@@ -152,8 +152,8 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   let signedIn = false
   let repo = ''
   let starred: string[] = []
-  let autoRefresh = true
-  let autoClassify = false
+  // The settings of each repository that the user changed.
+  const repoSettings = new Map<string, { autoRefresh: boolean; autoClassify: boolean }>()
   // The event streams after a refresh wait until the test checks the spinner.
   let refreshHeld = Promise.resolve()
   let releaseRefresh = () => {}
@@ -164,7 +164,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
 
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred, autoRefresh, autoClassify })
+  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred })
   const requests = (): Requests =>
     repo === sample
       ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'] }
@@ -192,6 +192,12 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
       starred = starred.filter((item) => item !== star[1])
       return json(route, 200, settings())
     }
+    const settingsOf = path.match(/^\/api\/repos\/([^/]+\/[^/]+)\/settings$/)
+    if (settingsOf) {
+      const current = repoSettings.get(settingsOf[1]) ?? { autoRefresh: true, autoClassify: false }
+      if (request.method() === 'PUT') repoSettings.set(settingsOf[1], { ...current, ...request.postDataJSON() })
+      return json(route, 200, { repo: settingsOf[1], ...(repoSettings.get(settingsOf[1]) ?? current) })
+    }
     const pull = path.match(/^\/api\/repos\/[^/]+\/[^/]+\/pulls\/(\d+)(\/\w+)?$/)
     switch (call) {
       case 'GET /api/me':
@@ -199,10 +205,8 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
       case 'GET /api/settings':
         return json(route, 200, settings())
       case 'PUT /api/settings': {
-        const update = request.postDataJSON() as { repo?: string; autoRefresh?: boolean; autoClassify?: boolean }
+        const update = request.postDataJSON() as { repo?: string }
         repo = update.repo?.toLowerCase() ?? repo
-        autoRefresh = update.autoRefresh ?? autoRefresh
-        autoClassify = update.autoClassify ?? autoClassify
         return json(route, 200, settings())
       }
       case 'POST /api/review-requests/refresh':
@@ -278,7 +282,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await confirmation.getByRole('button', { name: 'Cancel' }).click()
   await expect(confirmation).toBeHidden()
 
-  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settingsDialog = page.getByRole('dialog', { name: 'Settings' })
   await expect(settingsDialog.getByLabel('OpenRouter API key')).toHaveAttribute('placeholder', 'Saved on the server')
   await expect(settingsDialog.getByRole('button', { name: /anthropic\/claude-sonnet-5.5/ })).toBeEnabled()
@@ -345,18 +349,35 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(refresh.getByRole('status')).toBeHidden({ timeout: 10000 })
   await expect(refresh).toBeEnabled()
 
-  const toggle = updates.getByRole('switch', { name: 'Auto-refresh' })
-  await expect(toggle).toBeChecked()
-  await toggle.click()
-  await expect(toggle).not.toBeChecked()
-  await expect.poll(() => autoRefresh).toBe(false)
-  const classify = updates.getByRole('switch', { name: 'Auto-classify' })
-  await expect(classify).not.toBeChecked()
-  await classify.click()
-  await expect(classify).toBeChecked()
-  await expect.poll(() => autoClassify).toBe(true)
-  await expect(updates.getByRole('alert')).toHaveCount(0)
-  await expect(updates.getByText(/needs an OpenRouter API key/)).toHaveCount(0)
+  await expect(updates.getByRole('switch')).toHaveCount(0)
   await page.locator('.sidebar').screenshot({ path: join(screenshots, '9-refresh-footer.png') })
-  expect(writes.slice(5)).toEqual(['PUT /api/settings', 'POST /api/review-requests/refresh', 'PUT /api/settings', 'PUT /api/settings'])
+
+  await updates.getByRole('button', { name: 'Repository settings' }).click()
+  const repoDialog = page.getByRole('dialog', { name: 'Repository settings' })
+  await expect(repoDialog).toContainText(`These settings apply only to ${sample}.`)
+  const refreshSwitch = repoDialog.getByRole('region', { name: 'Refresh' }).getByRole('switch', { name: 'Auto-refresh' })
+  const classifySwitch = repoDialog.getByRole('region', { name: 'Classify' }).getByRole('switch', { name: 'Auto-classify' })
+  const reviewSwitch = repoDialog.getByRole('region', { name: 'Review' }).getByRole('switch', { name: 'Auto-review' })
+  await expect(refreshSwitch).toBeChecked()
+  await expect(classifySwitch).not.toBeChecked()
+  await expect(reviewSwitch).toBeDisabled()
+  await refreshSwitch.click()
+  await expect(refreshSwitch).not.toBeChecked()
+  await classifySwitch.click()
+  await expect(classifySwitch).toBeChecked()
+  await expect.poll(() => repoSettings.get(sample)).toEqual({ autoRefresh: false, autoClassify: true })
+  await expect(repoDialog.getByRole('alert')).toHaveCount(0)
+  await page.screenshot({ path: join(screenshots, '10-repo-settings.png'), animations: 'disabled' })
+  await repoDialog.getByRole('button', { name: 'Close' }).click()
+  await expect(repoDialog).toBeHidden()
+
+  await updates.getByRole('button', { name: 'Repository settings' }).click()
+  await expect(refreshSwitch).not.toBeChecked()
+  await expect(classifySwitch).toBeChecked()
+  expect(writes.slice(5)).toEqual([
+    'PUT /api/settings',
+    'POST /api/review-requests/refresh',
+    `PUT /api/repos/${sample}/settings`,
+    `PUT /api/repos/${sample}/settings`,
+  ])
 })

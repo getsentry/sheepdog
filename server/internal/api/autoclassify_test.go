@@ -47,10 +47,8 @@ func TestAutoClassifyRunsOnceForEachHeadCommit(t *testing.T) {
 	h.settings(alice, map[string]string{"openRouterKey": aliceKey, "model": "alice/model"})
 	h.classificationsStay(alice, "alice", 0)
 
-	var settings settingsResponse
-	h.json("PUT", "/api/settings", alice, map[string]bool{"autoClassify": true}, http.StatusOK, &settings)
-	if !settings.AutoClassify || !settings.AutoRefresh {
-		t.Fatalf("settings %+v", settings)
+	if got := h.repoSettings(alice, aliceRepo, map[string]bool{"autoClassify": true}); got != (repoSettingsResponse{Repo: aliceRepo, AutoRefresh: true, AutoClassify: true}) {
+		t.Fatalf("the answer %+v", got)
 	}
 	// The poll interval is an hour, so only the poll of the switch starts the classification.
 	h.waitClassifications(1)
@@ -68,15 +66,16 @@ func TestAutoClassifyRunsOnceForEachHeadCommit(t *testing.T) {
 	h.waitClassifications(2)
 	h.classificationsStay(alice, "alice", 2)
 
-	h.json("GET", "/api/settings", alice, nil, http.StatusOK, &settings)
-	if !settings.AutoClassify {
-		t.Error("GET has auto classify off")
-	}
+	// Auto classify of another repository does not classify in this one.
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoClassify": false})
+	h.repoSettings(alice, bobRepo, map[string]bool{"autoClassify": true})
+	h.github.setPull(func(p *fakePull) { p.headSHA = "sha-3" })
+	h.classificationsStay(alice, "alice", 2)
 }
 
 func TestAutoClassifySkipsRows(t *testing.T) {
 	h, alice := laneHarness(t)
-	h.json("PUT", "/api/settings", alice, map[string]bool{"autoClassify": true}, http.StatusOK, nil)
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoClassify": true})
 	h.classificationsStay(alice, "alice", 0)
 	h.settings(alice, map[string]string{"openRouterKey": aliceKey})
 	h.classificationsStay(alice, "alice", 0)
@@ -99,9 +98,8 @@ func TestAutoClassifyDoesNotRepeatAFailure(t *testing.T) {
 	h := newHarness(t, func(s *Server) { s.pollInterval = time.Hour })
 	h.github.setRules(bobRepo+"@main", laneRules)
 	bob := h.signIn(bobToken)
-	h.json("PUT", "/api/settings", bob, map[string]any{
-		"repo": bobRepo, "openRouterKey": bobWrongKey, "model": "bob/model", "autoClassify": true,
-	}, http.StatusOK, nil)
+	h.repoSettings(bob, bobRepo, map[string]bool{"autoClassify": true})
+	h.json("PUT", "/api/settings", bob, map[string]string{"repo": bobRepo, "openRouterKey": bobWrongKey, "model": "bob/model"}, http.StatusOK, nil)
 	h.waitClassifications(1)
 	h.classificationsStay(bob, "bob", 1)
 }
@@ -109,7 +107,8 @@ func TestAutoClassifyDoesNotRepeatAFailure(t *testing.T) {
 func TestAutoClassifyRunsTwoAtATime(t *testing.T) {
 	h := newHarness(t, nil)
 	alice := h.signIn(aliceToken)
-	h.json("PUT", "/api/settings", alice, map[string]any{"openRouterKey": aliceKey, "model": "slow/model", "autoClassify": true}, http.StatusOK, nil)
+	h.settings(alice, map[string]string{"openRouterKey": aliceKey, "model": "slow/model"})
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoClassify": true})
 	id := h.userID("alice")
 	rows := func(numbers ...int) []Row {
 		var list []Row

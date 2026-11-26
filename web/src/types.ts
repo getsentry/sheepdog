@@ -11,6 +11,11 @@ export interface Settings {
   hasOpenRouterKey: boolean
   // The starred repositories in lower case and in name order.
   starred: string[]
+}
+
+// The settings of the user for one repository in lower case.
+export interface RepoSettings {
+  repo: string
   // Off when the server checks GitHub only on demand, not every 30 seconds.
   autoRefresh: boolean
   // On when the server classifies the PRs where only a score is missing for an approve-and-automerge lane.
@@ -24,8 +29,6 @@ export interface SettingsUpdate {
   repo?: string
   model?: string
   openRouterKey?: string
-  autoRefresh?: boolean
-  autoClassify?: boolean
 }
 
 export const manualLane = 'manual'

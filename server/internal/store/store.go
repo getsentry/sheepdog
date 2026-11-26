@@ -73,10 +73,12 @@ CREATE TABLE IF NOT EXISTS starred_repos (
 	repo TEXT NOT NULL,
 	PRIMARY KEY (user_id, repo)
 );
-CREATE TABLE IF NOT EXISTS user_prefs (
-	user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS repo_prefs (
+	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	repo TEXT NOT NULL,
 	auto_refresh INTEGER NOT NULL,
-	auto_classify INTEGER NOT NULL DEFAULT 0
+	auto_classify INTEGER NOT NULL,
+	PRIMARY KEY (user_id, repo)
 );
 `
 
@@ -100,14 +102,18 @@ type Settings struct {
 	Repo          *string
 	Model         *string
 	OpenRouterKey *string
-	AutoRefresh   *bool
-	AutoClassify  *bool
 }
 
-// Prefs are the switches of a user. A user without stored preferences has auto refresh on and auto classify off.
+// Prefs are the switches of a user for one repository. Without stored preferences, auto refresh is on and auto classify is off.
 type Prefs struct {
 	AutoRefresh  bool
 	AutoClassify bool
+}
+
+// PrefsUpdate holds a partial update. A nil field stays unchanged.
+type PrefsUpdate struct {
+	AutoRefresh  *bool
+	AutoClassify *bool
 }
 
 func Open(path string, key []byte) (*Store, error) {
@@ -133,18 +139,6 @@ func Open(path string, key []byte) (*Store, error) {
 	if !hasGitHubID {
 		db.Close()
 		return nil, fmt.Errorf("the database %s is from an older version without users.github_id: delete it and start again", path)
-	}
-	// A user_prefs table from before auto classify has only auto_refresh.
-	var hasAutoClassify bool
-	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info('user_prefs') WHERE name = 'auto_classify'`).Scan(&hasAutoClassify); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if !hasAutoClassify {
-		if _, err := db.Exec(`ALTER TABLE user_prefs ADD COLUMN auto_classify INTEGER NOT NULL DEFAULT 0`); err != nil {
-			db.Close()
-			return nil, err
-		}
 	}
 	return &Store{db: db, sealer: s}, nil
 }
@@ -237,30 +231,28 @@ func (s *Store) UpdateSettings(ctx context.Context, userID int64, settings Setti
 			return err
 		}
 	}
-	if settings.AutoRefresh != nil {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO user_prefs (user_id, auto_refresh) VALUES (?, ?)
-			ON CONFLICT (user_id) DO UPDATE SET auto_refresh = excluded.auto_refresh`, userID, *settings.AutoRefresh); err != nil {
-			return err
-		}
-	}
-	if settings.AutoClassify != nil {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO user_prefs (user_id, auto_refresh, auto_classify) VALUES (?, 1, ?)
-			ON CONFLICT (user_id) DO UPDATE SET auto_classify = excluded.auto_classify`, userID, *settings.AutoClassify); err != nil {
-			return err
-		}
-	}
 	return tx.Commit()
 }
 
-func (s *Store) Prefs(ctx context.Context, userID int64) (Prefs, error) {
+func (s *Store) Prefs(ctx context.Context, userID int64, repo string) (Prefs, error) {
 	var p Prefs
-	err := s.db.QueryRowContext(ctx, `SELECT auto_refresh, auto_classify FROM user_prefs WHERE user_id = ?`, userID).Scan(&p.AutoRefresh, &p.AutoClassify)
+	err := s.db.QueryRowContext(ctx, `SELECT auto_refresh, auto_classify FROM repo_prefs WHERE user_id = ? AND repo = ?`, userID, repo).
+		Scan(&p.AutoRefresh, &p.AutoClassify)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Prefs{AutoRefresh: true}, nil
 	}
 	return p, err
+}
+
+// UpdatePrefs changes the preferences of the user for the repository. A new row starts from the defaults of Prefs.
+func (s *Store) UpdatePrefs(ctx context.Context, userID int64, repo string, update PrefsUpdate) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO repo_prefs (user_id, repo, auto_refresh, auto_classify) VALUES (?1, ?2, COALESCE(?3, 1), COALESCE(?4, 0))
+		ON CONFLICT (user_id, repo) DO UPDATE SET
+			auto_refresh = COALESCE(?3, auto_refresh),
+			auto_classify = COALESCE(?4, auto_classify)`,
+		userID, repo, update.AutoRefresh, update.AutoClassify)
+	return err
 }
 
 // UserIDsWithRepo returns the users that have a repository selected.

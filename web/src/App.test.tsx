@@ -57,7 +57,7 @@ async function signedIn(handler: (seen: Seen) => ReturnType<Parameters<typeof fa
       case 'GET /api/me':
         return reply(200, { login: 'alwx' })
       case 'GET /api/settings':
-        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: true, autoClassify: false })
+        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [] })
       case 'GET /api/repos':
         return reply(200, ['acme/app'])
       case 'GET /api/models':
@@ -384,10 +384,10 @@ it('shows the update time in the footer, and a spinner on refresh until the next
   const footer = screen.getByRole('complementary').querySelector('footer')!
   const updates = within(footer).getByRole('region', { name: 'Updates' })
   const time = new Date('2027-01-15T08:00:00Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
-  expect(updates.textContent).toBe(`Updated at ${time}Auto-refreshAuto-classify`)
+  expect(updates.textContent).toBe(`Updated at ${time} Repository settings`)
   expect(screen.getAllByText(/Updated at/)).toHaveLength(1)
   expect(footer.lastElementChild?.textContent).toBe(' Settings')
-  expect(within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' }).checked).toBe(true)
+  expect(within(footer).queryByRole('switch')).toBeNull()
 
   const refresh = within(updates).getByRole('button', { name: 'Refresh' })
   await act(async () => {
@@ -402,7 +402,7 @@ it('shows the update time in the footer, and a spinner on refresh until the next
   await emit(sources, { ...requests(rows, ['safe', 'docs']), fetchedAt: null })
   expect(refresh.hasAttribute('disabled')).toBe(false)
   expect(within(refresh).queryByRole('status')).toBeNull()
-  expect(updates.textContent).toBe('Not updated yetAuto-refreshAuto-classify')
+  expect(updates.textContent).toBe('Not updated yet Repository settings')
 })
 
 it('stops the refresh spinner and shows the error when the refresh fails', async () => {
@@ -416,41 +416,6 @@ it('stops the refresh spinner and shows the error when the refresh fails', async
   })
   expect(within(updates).getByRole('alert').textContent).toBe('Select a repository first')
   expect(within(updates).getByRole('button', { name: 'Refresh' }).hasAttribute('disabled')).toBe(false)
-})
-
-it('turns auto-refresh off at once, and puts it back with an error when the server refuses', async () => {
-  const gate = new Gate()
-  let fails = false
-  const { sent } = await signedIn((seen) => {
-    if (seen.method !== 'PUT' || seen.path !== '/api/settings') return
-    return gate.wait().then(() =>
-      fails
-        ? failure(500, 'Internal server error')
-        : reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: false }),
-    )
-  })
-  const updates = screen.getByRole('region', { name: 'Updates' })
-  const toggle = within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' })
-  await act(async () => {
-    fireEvent.click(toggle)
-    await settle()
-  })
-  expect(toggle.checked).toBe(false)
-  await act(async () => {
-    gate.open()
-    await settle()
-  })
-  expect(toggle.checked).toBe(false)
-  expect(within(updates).queryByRole('alert')).toBeNull()
-
-  fails = true
-  await act(async () => {
-    fireEvent.click(toggle)
-    await settle()
-  })
-  expect(toggle.checked).toBe(false)
-  expect(within(updates).getByRole('alert').textContent).toBe('Internal server error')
-  expect(sent('PUT', '/api/settings').map((seen) => seen.body)).toEqual([{ autoRefresh: false }, { autoRefresh: true }])
 })
 
 it('links the sheepdog.yml of the repository on GitHub, and hides the link without the file', async () => {
@@ -468,22 +433,80 @@ it('links the sheepdog.yml of the repository on GitHub, and hides the link witho
   expect(within(header).queryByRole('link')).toBeNull()
 })
 
-it('turns auto-classify on, and says when Settings miss the key or the model', async () => {
-  const settings = { repo: 'acme/app', model: '', hasOpenRouterKey: false, starred: [], autoRefresh: true, autoClassify: false }
-  const { sent } = await signedIn((seen) => {
-    if (seen.path === '/api/settings') return reply(200, seen.method === 'PUT' ? { ...settings, autoClassify: true } : settings)
-  })
-  const updates = screen.getByRole('region', { name: 'Updates' })
-  const toggle = within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-classify' })
-  expect(toggle.checked).toBe(false)
-  expect(within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' }).checked).toBe(true)
-  expect(within(updates).queryByText(/needs an OpenRouter API key/)).toBeNull()
+const repoSettingsPath = '/api/repos/acme/app/settings'
 
+async function openRepoSettings() {
   await act(async () => {
-    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: 'Repository settings' }))
     await settle()
   })
-  expect(toggle.checked).toBe(true)
-  expect(sent('PUT', '/api/settings').map((seen) => seen.body)).toEqual([{ autoClassify: true }])
-  expect(within(updates).getByText('Auto-classify needs an OpenRouter API key and a model in Settings.')).toBeTruthy()
+  return screen.getByRole('dialog', { name: 'Repository settings' })
+}
+
+it('opens the repository settings with refresh, classify, and a disabled review', async () => {
+  const gate = new Gate()
+  let fails = false
+  const { sent } = await signedIn((seen) => {
+    if (seen.path !== repoSettingsPath) return
+    if (seen.method === 'GET') return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false })
+    return gate.wait().then(() =>
+      fails ? failure(500, 'Internal server error') : reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: true }),
+    )
+  })
+  const dialog = await openRepoSettings()
+  expect(within(dialog).getByText('These settings apply only to acme/app.')).toBeTruthy()
+  const section = (name: string) => within(dialog).getByRole('region', { name })
+  expect(within(dialog).getAllByRole('region').map((region) => region.getAttribute('aria-label'))).toEqual(['Refresh', 'Classify', 'Review'])
+  const refresh = within(section('Refresh')).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' })
+  const classify = within(section('Classify')).getByRole<HTMLInputElement>('switch', { name: 'Auto-classify' })
+  const review = within(section('Review')).getByRole<HTMLInputElement>('switch', { name: 'Auto-review' })
+  expect([refresh.checked, classify.checked, review.checked, review.disabled]).toEqual([true, false, false, true])
+  expect(section('Classify').textContent).toContain('It uses tokens, and you pay for them.')
+  expect(section('Review').textContent).toContain('It uses tokens, and you pay for them. Auto-review does not work yet.')
+  expect(within(dialog).queryByText(/needs an OpenRouter API key/)).toBeNull()
+
+  await act(async () => {
+    fireEvent.click(classify)
+    await settle()
+  })
+  expect(classify.checked).toBe(true)
+  await act(async () => {
+    gate.open()
+    await settle()
+  })
+  expect(classify.checked).toBe(true)
+
+  fails = true
+  await act(async () => {
+    fireEvent.click(refresh)
+    await settle()
+  })
+  expect(refresh.checked).toBe(true)
+  expect(within(dialog).getByRole('alert').textContent).toBe('Internal server error')
+  fireEvent.click(review)
+  expect(sent('PUT', repoSettingsPath).map((seen) => seen.body)).toEqual([{ autoClassify: true }, { autoRefresh: false }])
+  expect(sent('PUT', '/api/settings')).toHaveLength(0)
+
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+  expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+it('says in the repository settings when auto-classify misses the key or the model', async () => {
+  await signedIn((seen) => {
+    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: '', hasOpenRouterKey: false, starred: [] })
+    if (seen.path === repoSettingsPath) return reply(200, { repo: 'acme/app', autoRefresh: false, autoClassify: true })
+  })
+  const dialog = await openRepoSettings()
+  expect(within(dialog).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' }).checked).toBe(false)
+  expect(within(dialog).getByText('Auto-classify needs an OpenRouter API key and a model in Settings.')).toBeTruthy()
+})
+
+it('shows a failed load of the repository settings', async () => {
+  await signedIn((seen) => {
+    if (seen.path === repoSettingsPath) return failure(500, 'Internal server error')
+  })
+  const dialog = await openRepoSettings()
+  expect(within(dialog).queryByRole('switch')).toBeNull()
+  expect(within(dialog).queryByRole('status')).toBeNull()
+  expect(within(dialog).getByRole('alert').textContent).toBe('Internal server error')
 })

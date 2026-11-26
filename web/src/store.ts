@@ -5,6 +5,7 @@ import type {
   Classification,
   PullLink,
   PullRequest,
+  RepoSettings,
   Review,
   Row,
   RunningTask,
@@ -34,8 +35,10 @@ export interface State {
   requests: Requests | null
   // From a click on refresh until the next requests event.
   refreshing: boolean
-  // The last failed refresh or change of a switch in the footer.
-  footerError: string | null
+  refreshError: string | null
+  // The settings of the repository whose settings dialog opened last.
+  repoSettings: RepoSettings | null
+  repoSettingsError: string | null
   selection: number | null
   // Set while the event stream is down.
   connectionError: string | null
@@ -67,7 +70,9 @@ type Field =
   | 'repositoriesError'
   | 'starError'
   | 'refreshing'
-  | 'footerError'
+  | 'refreshError'
+  | 'repoSettings'
+  | 'repoSettingsError'
   | 'selection'
   | 'connectionError'
   | 'error'
@@ -109,7 +114,9 @@ export const initialState: State = {
   starError: null,
   requests: null,
   refreshing: false,
-  footerError: null,
+  refreshError: null,
+  repoSettings: null,
+  repoSettingsError: null,
   selection: null,
   connectionError: null,
   error: null,
@@ -304,6 +311,8 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
   let tasksVersion = 0
   // The generation of a running load of the repositories.
   let loadingRepositories: number | null = null
+  // The repository of the latest load of repository settings.
+  let loadingRepoSettings = ''
   let signingOut: Promise<void> = Promise.resolve()
 
   const getState = () => state
@@ -551,25 +560,41 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
     // A second click before the next requests event sends nothing.
     async refresh() {
       if (state.refreshing) return
-      set({ refreshing: true, footerError: null })
+      set({ refreshing: true, refreshError: null })
       try {
         await checked((client) => client.refresh())
       } catch (error) {
-        if (!(error instanceof Cancelled)) set({ refreshing: false, footerError: message(error) })
+        if (!(error instanceof Cancelled)) set({ refreshing: false, refreshError: message(error) })
+      }
+    },
+
+    // A running change of a switch keeps its value, and a late load of another repository changes nothing.
+    async loadRepoSettings(repo: string) {
+      const k = repo.toLowerCase()
+      loadingRepoSettings = k
+      set({ repoSettingsError: null, repoSettings: state.repoSettings?.repo === k ? state.repoSettings : null })
+      try {
+        const loaded = await checked((client) => client.repoSettings(k))
+        if (loadingRepoSettings === k && state.savingPreferences.size === 0) set({ repoSettings: loaded })
+      } catch (error) {
+        if (!(error instanceof Cancelled) && loadingRepoSettings === k) set({ repoSettingsError: message(error) })
       }
     },
 
     // The switch changes at once, and goes back when the server refuses. A second change before the answer sends nothing.
-    async setPreference(name: Preference, on: boolean) {
-      if (!state.settings || state.savingPreferences.has(name)) return
+    async setRepoPreference(name: Preference, on: boolean) {
+      const current = state.repoSettings
+      if (!current || state.savingPreferences.has(name)) return
       const generation = state.generation
-      set({ settings: { ...state.settings, [name]: on }, footerError: null })
+      set({ repoSettings: { ...current, [name]: on }, repoSettingsError: null })
       dispatch({ type: 'pending', set: 'savingPreferences', key: name, on: true })
       try {
-        await checked((client) => client.updateSettings({ [name]: on }))
+        await checked((client) => client.updateRepoSettings(current.repo, { [name]: on }))
       } catch (error) {
         if (error instanceof Cancelled) return
-        if (state.settings) set({ settings: { ...state.settings, [name]: !on }, footerError: message(error) })
+        if (state.repoSettings?.repo === current.repo) {
+          set({ repoSettings: { ...state.repoSettings, [name]: !on }, repoSettingsError: message(error) })
+        }
       } finally {
         if (generation === state.generation) dispatch({ type: 'pending', set: 'savingPreferences', key: name, on: false })
       }

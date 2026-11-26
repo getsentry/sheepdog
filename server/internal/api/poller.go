@@ -124,15 +124,15 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 			s.autoClassify(ctx, user.ID, user.Repo, polled.Rows)
 		}
 		ticker.Reset(s.pollInterval)
-		if !s.waitPoll(ctx, run, user.ID, ticker.C) {
+		if !s.waitPoll(ctx, run, user.ID, user.Repo, ticker.C) {
 			return
 		}
 	}
 }
 
-// waitPoll waits for a poll-now signal, or for a tick while the user has auto refresh on. It returns false when ctx ends.
+// waitPoll waits for a poll-now signal, or for a tick while the user has auto refresh on for the repository. It returns false when ctx ends.
 // It reads the preference at each tick, so a change needs no signal to the poller.
-func (s *Server) waitPoll(ctx context.Context, run *pollRun, userID int64, tick <-chan time.Time) bool {
+func (s *Server) waitPoll(ctx context.Context, run *pollRun, userID int64, repo string, tick <-chan time.Time) bool {
 	for {
 		select {
 		case <-ctx.Done():
@@ -140,7 +140,7 @@ func (s *Server) waitPoll(ctx context.Context, run *pollRun, userID int64, tick 
 		case <-run.now:
 			return true
 		case <-tick:
-			prefs, err := s.store.Prefs(ctx, userID)
+			prefs, err := s.store.Prefs(ctx, userID, repo)
 			if err != nil && ctx.Err() == nil {
 				log.Printf("read auto refresh of user %d: %v", userID, err)
 			}
