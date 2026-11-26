@@ -239,7 +239,8 @@ func (c *Client) Repositories(ctx context.Context) ([]string, error) {
 }
 
 const reviewRequestsQuery = `
-query($q: String!, $owner: String!, $login: String!) {
+query($q: String!, $owner: String!, $name: String!, $login: String!) {
+  repository(owner: $owner, name: $name) { defaultBranchRef { name } }
   search(query: $q, type: ISSUE, first: 100) {
     nodes {
       ... on PullRequest {
@@ -261,19 +262,21 @@ query($q: String!, $owner: String!, $login: String!) {
   }
 }` + rowFields
 
-func (c *Client) ReviewRequests(ctx context.Context, repo, login string) ([]Row, error) {
+// ReviewRequests returns the PRs that wait for a review of the user or a team of the user, and the default branch of the repository.
+func (c *Client) ReviewRequests(ctx context.Context, repo, login string) ([]Row, string, error) {
 	if err := ValidRepo(repo); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	owner, _, _ := strings.Cut(repo, "/")
+	owner, name, _ := strings.Cut(repo, "/")
 	var data json.RawMessage
 	err := c.graphql(ctx, reviewRequestsQuery, map[string]any{
 		"q":     "is:pr is:open archived:false repo:" + repo + " review-requested:@me",
 		"owner": owner,
+		"name":  name,
 		"login": login,
 	}, &data)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	return ToRows(data, login)
 }

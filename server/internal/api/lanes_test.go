@@ -234,6 +234,9 @@ func TestRowsHaveLanes(t *testing.T) {
 	if strings.Contains(string(data), "rulesError") {
 		t.Errorf("valid rules give a rules error: %s", data)
 	}
+	if !strings.Contains(string(data), `"defaultBranch":"main"`) {
+		t.Errorf("no default branch: %s", data)
+	}
 
 	h.classify("alice", aliceRepo, 101, "sha-0", 1)
 	if got := h.repoll(alice, "alice"); got.Rows[0].Lane.Name != "quick_look" {

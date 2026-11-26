@@ -73,6 +73,8 @@ export interface Requests {
   rows: Row[]
   // The lane names in the order of .github/sheepdog.yml, without manual.
   lanes: string[]
+  // Missing before the first successful poll.
+  defaultBranch?: string
   rulesError?: string
   error?: string
   // Set only when the default branch has no .github/sheepdog.yml. Then rows and lanes are empty.

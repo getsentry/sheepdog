@@ -167,7 +167,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred })
   const requests = (): Requests =>
     repo === sample
-      ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'] }
+      ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'], defaultBranch: 'main' }
       : repo === bare
         ? { repo, fetchedAt: ago(0.1), rows: [], lanes: [], setup: { defaultBranch: 'main', pullRequest: setupOpened ? setupPR : null } }
         : { repo, fetchedAt: null, rows: [], lanes: [] }
@@ -262,10 +262,6 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
 
   const safe = page.getByRole('region', { name: 'safe' })
   await expect(safe.getByRole('heading')).toContainText('Approve and merge (1)')
-  await expect(page.getByRole('link', { name: 'Open sheepdog.yml on GitHub' })).toHaveAttribute(
-    'href',
-    `https://github.com/${sample}/blob/HEAD/.github/sheepdog.yml`,
-  )
   await expect(page.getByRole('region', { name: 'manual' }).getByTitle(/changed after this classification/)).toHaveText('6')
   await safe.getByText('Bump expo from 57.0.1 to 57.2.0').click()
   await expect(page).toHaveTitle('Bump expo from 57.0.1 to 57.2.0')
@@ -295,7 +291,6 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await picker.getByRole('button', { name: bare }).click()
   const warning = page.getByRole('region', { name: 'Setup' })
   await expect(warning).toContainText(`${bare} has no .github/sheepdog.yml on its default branch main.`)
-  await expect(page.getByRole('link', { name: 'Open sheepdog.yml on GitHub' })).toBeHidden()
   await expect(page.getByRole('region', { name: 'safe' })).toBeHidden()
   await expect(page.getByRole('main')).toHaveText('')
   await page.screenshot({ path: join(screenshots, '5-setup-warning.png') })
@@ -355,6 +350,10 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await updates.getByRole('button', { name: 'Repository settings' }).click()
   const repoDialog = page.getByRole('dialog', { name: 'Repository settings' })
   await expect(repoDialog).toContainText(`These settings apply only to ${sample}.`)
+  await expect(repoDialog.getByRole('link', { name: 'Edit configuration' })).toHaveAttribute(
+    'href',
+    `https://github.com/${sample}/edit/main/.github/sheepdog.yml`,
+  )
   const refreshSwitch = repoDialog.getByRole('region', { name: 'Refresh' }).getByRole('switch', { name: 'Auto-refresh' })
   const classifySwitch = repoDialog.getByRole('region', { name: 'Classify' }).getByRole('switch', { name: 'Auto-classify' })
   const reviewSwitch = repoDialog.getByRole('region', { name: 'Review' }).getByRole('switch', { name: 'Auto-review' })

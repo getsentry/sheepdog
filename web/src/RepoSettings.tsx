@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useAppState, useStore } from './context'
-import { Modal, Spinner, Switch } from './ui'
+import { ExternalLink, Modal, Spinner, Switch } from './ui'
 
 // The switches of the user for one repository. Mounted only while open, so each open loads them again.
 export function RepoSettings({ repo, onClose }: { repo: string; onClose: () => void }) {
@@ -9,6 +9,10 @@ export function RepoSettings({ repo, onClose }: { repo: string; onClose: () => v
   const current = state.repoSettings?.repo === repo.toLowerCase() ? state.repoSettings : null
   const settings = state.settings
   const missingModel = settings !== null && (!settings.hasOpenRouterKey || !settings.model)
+  // GitHub edits a file only on a branch, so the link needs the default branch from the last poll.
+  const requests = state.requests
+  const branch = requests?.repo.toLowerCase() === repo.toLowerCase() && !requests.setup ? requests.defaultBranch : undefined
+  const editURL = branch && `https://github.com/${repo}/edit/${branch.split('/').map(encodeURIComponent).join('/')}/.github/sheepdog.yml`
 
   useEffect(() => {
     void actions.loadRepoSettings(repo)
@@ -22,7 +26,15 @@ export function RepoSettings({ repo, onClose }: { repo: string; onClose: () => v
           ✕
         </button>
       </div>
-      <p className="muted">These settings apply only to {repo}.</p>
+      <div className="buttons">
+        <p className="muted">These settings apply only to {repo}.</p>
+        <span className="spacer" />
+        {editURL && (
+          <ExternalLink href={editURL} className="button">
+            Edit configuration
+          </ExternalLink>
+        )}
+      </div>
       {current === null ? (
         state.repoSettingsError === null && (
           <div className="center">

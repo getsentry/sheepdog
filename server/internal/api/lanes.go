@@ -50,9 +50,9 @@ func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user 
 		if err != nil {
 			return Requests{}, err
 		}
-		return Requests{Rows: []Row{}, Lanes: []string{}, Setup: &Setup{DefaultBranch: missingOn, PullRequest: pr}}, nil
+		return Requests{Rows: []Row{}, Lanes: []string{}, DefaultBranch: missingOn, Setup: &Setup{DefaultBranch: missingOn, PullRequest: pr}}, nil
 	}
-	rows, err := client.ReviewRequests(ctx, user.Repo, user.Login)
+	rows, defaultBranch, err := client.ReviewRequests(ctx, user.Repo, user.Login)
 	if err != nil {
 		return Requests{}, err
 	}
@@ -65,7 +65,7 @@ func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user 
 		classifications[c.Number] = &rules.Classification{HeadSHA: c.HeadSHA, Score: c.Score}
 	}
 
-	result := Requests{Rows: make([]Row, 0, len(rows)), Lanes: []string{}}
+	result := Requests{Rows: make([]Row, 0, len(rows)), Lanes: []string{}, DefaultBranch: defaultBranch}
 	rulesByBase := map[string]*rules.Rules{}
 	var problems []string
 	var ciNumbers []int

@@ -105,9 +105,14 @@ func (pr rowNode) row() Row {
 	return row
 }
 
-// ToRows reads the data object of the review request query.
-func ToRows(data []byte, login string) ([]Row, error) {
+// ToRows reads the data object of the review request query. It also returns the default branch of the repository.
+func ToRows(data []byte, login string) ([]Row, string, error) {
 	var response struct {
+		Repository *struct {
+			DefaultBranchRef *struct {
+				Name string `json:"name"`
+			} `json:"defaultBranchRef"`
+		} `json:"repository"`
 		Search nodes[struct {
 			rowNode
 			ReviewRequests nodes[struct {
@@ -125,7 +130,11 @@ func ToRows(data []byte, login string) ([]Row, error) {
 		} `json:"repositoryOwner"`
 	}
 	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	defaultBranch := ""
+	if repo := response.Repository; repo != nil && repo.DefaultBranchRef != nil {
+		defaultBranch = repo.DefaultBranchRef.Name
 	}
 	myTeams := map[string]bool{}
 	if owner := response.RepositoryOwner; owner != nil && owner.Teams != nil {
@@ -150,5 +159,5 @@ func ToRows(data []byte, login string) ([]Row, error) {
 		rows = append(rows, row)
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].UpdatedAt.After(rows[j].UpdatedAt) })
-	return rows, nil
+	return rows, defaultBranch, nil
 }

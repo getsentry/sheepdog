@@ -12,7 +12,6 @@ import {
   Modal,
   RefreshIcon,
   SearchList,
-  SheepIcon,
   SlidersIcon,
   Spinner,
   StarIcon,
@@ -84,15 +83,6 @@ function RepoPicker() {
 
   return (
     <>
-      {repo !== '' && !state.requests?.setup && (
-        <ExternalLink
-          href={`https://github.com/${name}/blob/HEAD/.github/sheepdog.yml`}
-          className="rules-link"
-          label="Open sheepdog.yml on GitHub"
-        >
-          <SheepIcon />
-        </ExternalLink>
-      )}
       <button
         type="button"
         className="repo-picker borderless"

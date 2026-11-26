@@ -418,21 +418,6 @@ it('stops the refresh spinner and shows the error when the refresh fails', async
   expect(within(updates).getByRole('button', { name: 'Refresh' }).hasAttribute('disabled')).toBe(false)
 })
 
-it('links the sheepdog.yml of the repository on GitHub, and hides the link without the file', async () => {
-  const { sources } = await signedIn((seen) => {
-    if (seen.path === '/api/repos') return reply(200, ['Acme/App'])
-  })
-  const header = screen.getByRole('complementary').querySelector('header')!
-  const link = within(header).getByRole('link', { name: 'Open sheepdog.yml on GitHub' })
-  expect(link.getAttribute('href')).toBe('https://github.com/Acme/App/blob/HEAD/.github/sheepdog.yml')
-  expect(link.getAttribute('target')).toBe('_blank')
-  expect(link.getAttribute('rel')).toBe('noopener noreferrer')
-  expect(link.nextElementSibling?.textContent).toContain('Acme/App')
-
-  await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: null }))
-  expect(within(header).queryByRole('link')).toBeNull()
-})
-
 const repoSettingsPath = '/api/repos/acme/app/settings'
 
 async function openRepoSettings() {
@@ -489,6 +474,23 @@ it('opens the repository settings with refresh, classify, and a disabled review'
 
   fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
   expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+it('links the configuration in the repository settings to the GitHub editor on the default branch', async () => {
+  const { sources } = await signedIn((seen) => {
+    if (seen.path === repoSettingsPath) return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false })
+  })
+  const dialog = await openRepoSettings()
+  expect(within(dialog).queryByRole('link', { name: 'Edit configuration' })).toBeNull()
+
+  await emit(sources, { ...requests(rows, ['safe']), fetchedAt: '2027-01-15T08:00:00Z', defaultBranch: 'release/2.x' })
+  const link = within(dialog).getByRole('link', { name: 'Edit configuration' })
+  expect(link.getAttribute('href')).toBe('https://github.com/acme/app/edit/release/2.x/.github/sheepdog.yml')
+  expect(link.getAttribute('target')).toBe('_blank')
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+
+  await emit(sources, { ...withoutRules({ defaultBranch: 'main', pullRequest: null }), repo: 'acme/app', defaultBranch: 'main' })
+  expect(within(dialog).queryByRole('link', { name: 'Edit configuration' })).toBeNull()
 })
 
 it('says in the repository settings when auto-classify misses the key or the model', async () => {

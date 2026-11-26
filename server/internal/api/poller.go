@@ -16,9 +16,10 @@ type Requests struct {
 	FetchedAt *time.Time `json:"fetchedAt"`
 	Rows      []Row      `json:"rows"`
 	// Lanes are the lane names in the order of the rules file, without manual.
-	Lanes      []string `json:"lanes"`
-	RulesError string   `json:"rulesError,omitempty"`
-	Error      string   `json:"error,omitempty"`
+	Lanes         []string `json:"lanes"`
+	DefaultBranch string   `json:"defaultBranch,omitempty"`
+	RulesError    string   `json:"rulesError,omitempty"`
+	Error         string   `json:"error,omitempty"`
 	// Setup is set when the default branch has no rules file. Then the poll does not search for review requests.
 	Setup *Setup `json:"setup,omitempty"`
 }
@@ -171,6 +172,7 @@ func (s *Server) record(userID int64, run *pollRun, polled Requests, err error) 
 		result.FetchedAt = &now
 		result.Rows = polled.Rows
 		result.Lanes = polled.Lanes
+		result.DefaultBranch = polled.DefaultBranch
 		result.RulesError = polled.RulesError
 		result.Setup = polled.Setup
 		result.Error = ""

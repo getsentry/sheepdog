@@ -171,7 +171,7 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if q, _ := req.Variables["q"].(string); strings.Contains(q, "repo:getsentry/"+id.login+"-repo ") {
 			nodes = f.pullNode(id, "CLEAN")
 		}
-		fmt.Fprintf(w, `{"data":{"search":{"nodes":[%s]},"repositoryOwner":{"teams":{"nodes":[]}}}}`, nodes)
+		fmt.Fprintf(w, `{"data":{"repository":{"defaultBranchRef":{"name":"main"}},"search":{"nodes":[%s]},"repositoryOwner":{"teams":{"nodes":[]}}}}`, nodes)
 	case strings.Contains(req.Query, "autoMergeAllowed"):
 		f.serveMergePR(w, id, req.Variables)
 	case strings.Contains(req.Query, "enablePullRequestAutoMerge"):

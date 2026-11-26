@@ -130,7 +130,7 @@ func TestInvalidRepositoryNameIsRejected(t *testing.T) {
 		t.Error("no request expected")
 	})
 	for _, repo := range []string{"acme", "acme/app review-requested:other", "acme/app/x", "../app", ""} {
-		if _, err := client.ReviewRequests(context.Background(), repo, "me"); err == nil {
+		if _, _, err := client.ReviewRequests(context.Background(), repo, "me"); err == nil {
 			t.Errorf("%q was accepted", repo)
 		}
 	}
@@ -169,6 +169,7 @@ func TestReviewRequestsSendSearchAndTeams(t *testing.T) {
 		want := map[string]any{
 			"q":     "is:pr is:open archived:false repo:acme/app review-requested:@me",
 			"owner": "acme",
+			"name":  "app",
 			"login": "me",
 		}
 		for key, value := range want {
@@ -178,12 +179,12 @@ func TestReviewRequestsSendSearchAndTeams(t *testing.T) {
 		}
 		io.WriteString(w, `{"data":`+rowsFixture+`}`)
 	})
-	rows, err := client.ReviewRequests(context.Background(), "acme/app", "me")
+	rows, defaultBranch, err := client.ReviewRequests(context.Background(), "acme/app", "me")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 5 || rows[0].Number != 5 {
-		t.Fatalf("got %+v", rows)
+	if len(rows) != 5 || rows[0].Number != 5 || defaultBranch != "release/2.x" {
+		t.Fatalf("got %+v, default branch %q", rows, defaultBranch)
 	}
 }
 

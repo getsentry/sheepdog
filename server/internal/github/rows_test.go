@@ -80,14 +80,18 @@ const rowsFixture = `{
   },
   "repositoryOwner": {
     "teams": { "nodes": [ { "combinedSlug": "acme/mobile" }, { "combinedSlug": "acme/sdk" } ] }
-  }
+  },
+  "repository": { "defaultBranchRef": { "name": "release/2.x" } }
 }`
 
 func fixtureRows(t *testing.T) []Row {
 	t.Helper()
-	rows, err := ToRows([]byte(rowsFixture), "me")
+	rows, defaultBranch, err := ToRows([]byte(rowsFixture), "me")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if defaultBranch != "release/2.x" {
+		t.Fatalf("default branch %q", defaultBranch)
 	}
 	return rows
 }
@@ -120,7 +124,7 @@ func TestDirectRequestIsLabeledYou(t *testing.T) {
 }
 
 func TestLoginIgnoresCase(t *testing.T) {
-	rows, err := ToRows([]byte(rowsFixture), "ME")
+	rows, _, err := ToRows([]byte(rowsFixture), "ME")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +194,7 @@ func TestLaneFactsAreDecoded(t *testing.T) {
 	}, {
 		"number": 10, "files": null, "commits": {"nodes": [{"commit": {"statusCheckRollup": null}}]}, "reviewRequests": {"nodes": []}
 	}]}}`
-	rows, err := ToRows([]byte(data), "me")
+	rows, _, err := ToRows([]byte(data), "me")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,8 +209,8 @@ func TestLaneFactsAreDecoded(t *testing.T) {
 }
 
 func TestUserOwnedRepositoryHasNoTeams(t *testing.T) {
-	rows, err := ToRows([]byte(`{ "search": { "nodes": [] }, "repositoryOwner": {} }`), "me")
-	if err != nil || len(rows) != 0 {
-		t.Fatalf("got %v, %v", rows, err)
+	rows, defaultBranch, err := ToRows([]byte(`{ "search": { "nodes": [] }, "repositoryOwner": {} }`), "me")
+	if err != nil || len(rows) != 0 || defaultBranch != "" {
+		t.Fatalf("got %v, %q, %v", rows, defaultBranch, err)
 	}
 }

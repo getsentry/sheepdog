@@ -285,23 +285,8 @@ a {
 }
 
 .sidebar > header {
-  display: flex;
-  align-items: center;
-  gap: 2px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
-}
-
-.rules-link {
-  display: inline-flex;
-  padding: 5px;
-  border-radius: 6px;
-  color: var(--muted);
-}
-
-.rules-link:hover {
-  background: var(--bg-hover);
-  color: var(--fg);
 }
 
 .repo-picker {

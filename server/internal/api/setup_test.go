@@ -126,7 +126,7 @@ func setupHarness(t *testing.T) (*harness, string) {
 func TestRepositoryWithoutRulesShowsSetup(t *testing.T) {
 	h, alice := setupHarness(t)
 	_, data := h.do("GET", "/api/review-requests", alice, nil)
-	for _, part := range []string{`"repo":"getsentry/no-rules"`, `"rows":[]`, `"lanes":[]`, `"setup":{"defaultBranch":"main","pullRequest":null}`} {
+	for _, part := range []string{`"repo":"getsentry/no-rules"`, `"rows":[]`, `"lanes":[]`, `"defaultBranch":"main"`, `"setup":{"defaultBranch":"main","pullRequest":null}`} {
 		if !strings.Contains(string(data), part) {
 			t.Errorf("requests have no %s: %s", part, data)
 		}
