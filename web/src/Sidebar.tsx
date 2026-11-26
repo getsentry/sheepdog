@@ -4,7 +4,19 @@ import { dangerTone, elapsed, relativeTime } from './format'
 import { isOutdated, key, laneSections, shownClassification, starredFirst, type LaneSection } from './logic'
 import { currentRepo, isMerging, isSettingUp, isStarred } from './store'
 import type { PullLink, Row, Setup } from './types'
-import { Capsule, ExternalLink, GearIcon, Modal, RefreshIcon, SearchList, Spinner, StarIcon, StopIcon, useNow } from './ui'
+import {
+  Capsule,
+  ExternalLink,
+  GearIcon,
+  Modal,
+  RefreshIcon,
+  SearchList,
+  SheepIcon,
+  Spinner,
+  StarIcon,
+  StopIcon,
+  useNow,
+} from './ui'
 
 export function Sidebar({
   onApproveAndMerge,
@@ -70,6 +82,15 @@ function RepoPicker() {
 
   return (
     <>
+      {repo !== '' && !state.requests?.setup && (
+        <ExternalLink
+          href={`https://github.com/${name}/blob/HEAD/.github/sheepdog.yml`}
+          className="rules-link"
+          label="Open sheepdog.yml on GitHub"
+        >
+          <SheepIcon />
+        </ExternalLink>
+      )}
       <button
         type="button"
         className="repo-picker borderless"

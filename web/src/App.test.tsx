@@ -452,3 +452,18 @@ it('turns auto-refresh off at once, and puts it back with an error when the serv
   expect(within(updates).getByRole('alert').textContent).toBe('Internal server error')
   expect(sent('PUT', '/api/settings').map((seen) => seen.body)).toEqual([{ autoRefresh: false }, { autoRefresh: true }])
 })
+
+it('links the sheepdog.yml of the repository on GitHub, and hides the link without the file', async () => {
+  const { sources } = await signedIn((seen) => {
+    if (seen.path === '/api/repos') return reply(200, ['Acme/App'])
+  })
+  const header = screen.getByRole('complementary').querySelector('header')!
+  const link = within(header).getByRole('link', { name: 'Open sheepdog.yml on GitHub' })
+  expect(link.getAttribute('href')).toBe('https://github.com/Acme/App/blob/HEAD/.github/sheepdog.yml')
+  expect(link.getAttribute('target')).toBe('_blank')
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  expect(link.nextElementSibling?.textContent).toContain('Acme/App')
+
+  await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: null }))
+  expect(within(header).queryByRole('link')).toBeNull()
+})

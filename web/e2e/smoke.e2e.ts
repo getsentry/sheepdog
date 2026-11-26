@@ -256,6 +256,10 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
 
   const safe = page.getByRole('region', { name: 'safe' })
   await expect(safe.getByRole('heading')).toContainText('Approve and merge (1)')
+  await expect(page.getByRole('link', { name: 'Open sheepdog.yml on GitHub' })).toHaveAttribute(
+    'href',
+    `https://github.com/${sample}/blob/HEAD/.github/sheepdog.yml`,
+  )
   await expect(page.getByRole('region', { name: 'manual' }).getByTitle(/changed after this classification/)).toHaveText('6')
   await safe.getByText('Bump expo from 57.0.1 to 57.2.0').click()
   await expect(page).toHaveTitle('Bump expo from 57.0.1 to 57.2.0')
@@ -285,6 +289,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await picker.getByRole('button', { name: bare }).click()
   const warning = page.getByRole('region', { name: 'Setup' })
   await expect(warning).toContainText(`${bare} has no .github/sheepdog.yml on its default branch main.`)
+  await expect(page.getByRole('link', { name: 'Open sheepdog.yml on GitHub' })).toBeHidden()
   await expect(page.getByRole('region', { name: 'safe' })).toBeHidden()
   await expect(page.getByRole('main')).toHaveText('')
   await page.screenshot({ path: join(screenshots, '5-setup-warning.png') })

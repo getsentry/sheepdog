@@ -19,9 +19,20 @@ export function Capsule({ tone, children }: { tone?: Tone; children: ReactNode }
   return <span className={`capsule ${tone ?? 'accent'}`}>{children}</span>
 }
 
-export function ExternalLink({ href, className, children }: { href: string; className?: string; children: ReactNode }) {
+// label is the accessible name and the tooltip of a link that shows only an icon.
+export function ExternalLink({
+  href,
+  className,
+  label,
+  children,
+}: {
+  href: string
+  className?: string
+  label?: string
+  children: ReactNode
+}) {
   return (
-    <a href={href} className={className} target="_blank" rel="noopener noreferrer">
+    <a href={href} className={className} title={label} aria-label={label} target="_blank" rel="noopener noreferrer">
       {children}
     </a>
   )
@@ -145,6 +156,21 @@ export function RefreshIcon() {
         strokeLinejoin="round"
         d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4v4.5H15"
       />
+    </svg>
+  )
+}
+
+export function SheepIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <g transform="translate(-0.54 -3.4) scale(1.1)">
+        <g fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 16.5a2.3 2.3 0 0 1-1.6-3.9a2.4 2.4 0 0 1 2-3.9a2.8 2.8 0 0 1 4.9-.9a2.6 2.6 0 0 1 4.3 1.9a2.4 2.4 0 0 1 .4 4.6a2.4 2.4 0 0 1-3.8 2.2a2.6 2.6 0 0 1-3.9 0a2.3 2.3 0 0 1-2.3 0Z" />
+          <path d="M10.5 17v3.2M16 17v3.2" />
+        </g>
+        <ellipse cx="6" cy="11" rx="2.4" ry="3" transform="rotate(-20 6 11)" fill="currentColor" />
+        <ellipse cx="3.8" cy="9.4" rx="1.4" ry="0.7" transform="rotate(25 3.8 9.4)" fill="currentColor" />
+      </g>
     </svg>
   )
 }
