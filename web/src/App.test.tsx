@@ -16,9 +16,14 @@ beforeAll(() => {
     this.removeAttribute('open')
     this.dispatchEvent(new Event('close'))
   }
+  // jsdom has no pointer capture.
+  HTMLElement.prototype.setPointerCapture = () => {}
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  localStorage.clear()
+})
 
 const pullRequest: PullRequest = {
   title: 'PR 2',
@@ -594,4 +599,44 @@ it('edits the global rules in the settings, starts from the template, and shows 
   expect(save.hasAttribute('disabled')).toBe(true)
   expect(within(dialog).queryByText(/not valid/)).toBeNull()
   expect(sent('PUT', '/api/settings').map((seen) => seen.body)).toEqual([{ globalRules: 'version: 2\n' }, { globalRules: template }])
+})
+
+it('changes the sidebar width with the pointer and the keys, keeps it, and resets it with a double click', async () => {
+  await signedIn()
+  const app = document.querySelector<HTMLElement>('.app')!
+  const handle = screen.getByRole('separator', { name: 'Resize the sidebar' })
+  const width = () => [app.style.getPropertyValue('--sidebar-width'), handle.getAttribute('aria-valuenow')]
+  expect(width()).toEqual(['440px', '440'])
+
+  fireEvent.pointerDown(handle, { clientX: 440, pointerId: 1 })
+  fireEvent.pointerMove(handle, { clientX: 500, pointerId: 1 })
+  expect(width()).toEqual(['500px', '500'])
+  expect(app.className).toBe('app resizing')
+  expect(localStorage.getItem('sheepdog.sidebarWidth')).toBeNull()
+  fireEvent.pointerUp(handle, { clientX: 540, pointerId: 1 })
+  expect(width()).toEqual(['540px', '540'])
+  expect(app.className).toBe('app')
+  expect(localStorage.getItem('sheepdog.sidebarWidth')).toBe('540')
+  // A move without a press changes nothing.
+  fireEvent.pointerMove(handle, { clientX: 900, pointerId: 1 })
+  expect(width()).toEqual(['540px', '540'])
+
+  fireEvent.keyDown(handle, { key: 'ArrowLeft' })
+  fireEvent.keyDown(handle, { key: 'ArrowLeft', shiftKey: true })
+  expect(width()).toEqual(['460px', '460'])
+  fireEvent.pointerDown(handle, { clientX: 460, pointerId: 2 })
+  fireEvent.pointerUp(handle, { clientX: 0, pointerId: 2 })
+  expect(width()).toEqual(['300px', '300'])
+  fireEvent.pointerDown(handle, { clientX: 300, pointerId: 3 })
+  fireEvent.pointerUp(handle, { clientX: 2000, pointerId: 3 })
+  expect(width()).toEqual([`${window.innerWidth - 360}px`, String(window.innerWidth - 360)])
+  fireEvent.doubleClick(handle)
+  expect(width()).toEqual(['440px', '440'])
+  expect(localStorage.getItem('sheepdog.sidebarWidth')).toBe('440')
+})
+
+it('starts with the kept sidebar width', async () => {
+  localStorage.setItem('sheepdog.sidebarWidth', '520')
+  await signedIn()
+  expect(screen.getByRole('separator', { name: 'Resize the sidebar' }).getAttribute('aria-valuenow')).toBe('520')
 })

@@ -148,7 +148,7 @@ function pullRequest(row: Row): PullRequest {
   }
 }
 
-test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, stars one, refreshes, and sets global rules', async ({ page }) => {
+test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, stars one, refreshes, sets global rules, and resizes the sidebar', async ({ page }) => {
   let signedIn = false
   let repo = ''
   let starred: string[] = []
@@ -413,4 +413,18 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(notice).toContainText('Sheepdog waits for the merge of pull request #1290')
   await expect(page.getByRole('region', { name: 'safe' })).toBeVisible()
   await page.screenshot({ path: join(screenshots, '12-global-rules-list.png') })
+
+  const handle = page.getByRole('separator', { name: 'Resize the sidebar' })
+  const sidebar = page.locator('.sidebar')
+  expect((await sidebar.boundingBox())?.width).toBe(440)
+  const box = (await handle.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + 300)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 200, box.y + 300, { steps: 5 })
+  await page.mouse.up()
+  expect((await sidebar.boundingBox())?.width).toBe(640)
+  await page.reload()
+  await expect(page.getByRole('region', { name: 'safe' })).toBeVisible()
+  expect((await sidebar.boundingBox())?.width).toBe(640)
+  await page.screenshot({ path: join(screenshots, '13-wide-sidebar.png') })
 })
