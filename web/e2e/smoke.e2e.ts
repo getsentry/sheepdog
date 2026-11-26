@@ -1,0 +1,224 @@
+/// <reference types="node" />
+import { expect, test, type Route } from '@playwright/test'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { Classification, PullRequest, Requests, Review, Row, RunningTask } from '../src/types'
+
+const screenshots = process.env.SHEEPDOG_SCREENSHOTS || join(tmpdir(), 'sheepdog-screenshots')
+const sample = 'getsentry/reviewer-react-native-sample'
+const now = Date.now()
+const ago = (minutes: number) => new Date(now - minutes * 60000).toISOString()
+
+const rows: Row[] = [
+  {
+    number: 2,
+    title: 'Bump expo from 57.0.1 to 57.2.0',
+    url: `https://github.com/${sample}/pull/2`,
+    isDraft: false,
+    updatedAt: ago(42),
+    additions: 6,
+    deletions: 6,
+    author: 'dependabot[bot]',
+    reasons: ['you'],
+    headSha: 'sha2',
+    lane: {
+      name: 'safe',
+      action: 'approve-and-automerge',
+      notes: ['Author dependabot[bot]', 'Only package.json and package-lock.json', '12 changed lines', 'Score 1 of 2'],
+    },
+    classification: { source: 'ci', score: 1, reason: 'A minor version bump of expo.', model: 'anthropic/claude-sonnet-5.5', headSha: 'sha2' },
+  },
+  {
+    number: 3,
+    title: 'Document the release steps in the README',
+    url: `https://github.com/${sample}/pull/3`,
+    isDraft: false,
+    updatedAt: ago(180),
+    additions: 140,
+    deletions: 12,
+    author: 'alwx',
+    reasons: ['team'],
+    headSha: 'sha3',
+    lane: { name: 'quick_look', action: 'suggest', notes: ['Needs at most 100 changed lines, has 152'] },
+    classification: { source: 'ci', score: 4, reason: 'Documentation only, but long.', model: 'anthropic/claude-sonnet-5.5', headSha: 'sha3' },
+  },
+  {
+    number: 1,
+    title: 'Send user feedback from the profile screen to Sentry',
+    url: `https://github.com/${sample}/pull/1`,
+    isDraft: true,
+    updatedAt: ago(60 * 26),
+    additions: 88,
+    deletions: 4,
+    author: 'octocat',
+    reasons: ['you'],
+    headSha: 'sha1',
+    lane: { name: 'manual', action: '', notes: ['Changes src/sentry.ts'] },
+  },
+]
+
+const stored: Classification = {
+  repo: sample,
+  number: 1,
+  headSha: 'old',
+  model: 'anthropic/claude-sonnet-5.5',
+  score: 6,
+  reason: 'Changes the Sentry setup of the app.',
+  diffTruncated: false,
+  prUpdatedAt: ago(60 * 30),
+  createdAt: ago(60 * 29),
+}
+
+const review: Review = {
+  repo: sample,
+  number: 2,
+  headSha: 'sha2',
+  model: 'anthropic/claude-sonnet-5.5',
+  risk: 'green',
+  summary: 'The PR moves expo to 57.2.0 in package.json and the lockfile. Nothing else changes.',
+  findings: [
+    {
+      severity: 'low',
+      file: 'package-lock.json',
+      title: 'Transitive updates',
+      detail: 'Three transitive packages move to new patch versions.',
+    },
+  ],
+  diffTruncated: false,
+  prUpdatedAt: ago(42),
+  createdAt: ago(30),
+}
+
+const tasks: RunningTask[] = [
+  { id: 'T1', kind: 'review', key: `${sample}#3`, title: 'Review of #3', subtitle: sample, startedAt: ago(1.3) },
+]
+
+function pullRequest(row: Row): PullRequest {
+  return {
+    title: row.title,
+    body: [
+      '<!-- Thank you for the PR -->',
+      'Bumps [expo](https://github.com/expo/expo) from 57.0.1 to 57.2.0.',
+      '',
+      '## Release notes',
+      '',
+      '- Fixes a crash on start in **Android** release builds.',
+      '- `expo-updates` checks for updates in the background.',
+      '',
+      '| Package | From | To |',
+      '| --- | --- | --- |',
+      '| expo | 57.0.1 | 57.2.0 |',
+      '',
+      '<img src="x" onerror="alert(1)">',
+    ].join('\n'),
+    headRefName: 'dependabot/npm_and_yarn/expo-57.2.0',
+    baseRefName: 'main',
+    headRefOid: row.headSha,
+    changedFiles: 2,
+    createdAt: ago(60 * 5),
+    updatedAt: row.updatedAt,
+    reviewDecision: 'REVIEW_REQUIRED',
+    labels: ['dependencies', 'javascript'],
+    reviewRequests: ['alwx'],
+    latestReviews: [],
+    checks: { passed: 5, failed: 0, pending: 0, skipped: 1 },
+  }
+}
+
+test('signs in, opens a PR, cancels approve and merge, and opens the settings', async ({ page }) => {
+  let signedIn = false
+  let repo = ''
+  const writes: string[] = []
+
+  const json = (route: Route, status: number, body: unknown) =>
+    route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true })
+  const requests = (): Requests =>
+    repo === sample
+      ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'] }
+      : { repo, fetchedAt: null, rows: [], lanes: [] }
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    const call = `${request.method()} ${path}`
+    if (request.method() !== 'GET') writes.push(call)
+    if (call === 'POST /api/session') {
+      signedIn = true
+      return json(route, 200, { login: 'alwx', sessionToken: 'not-a-real-token' })
+    }
+    if (!signedIn) return json(route, 401, { error: 'Sign in first' })
+    const pull = path.match(/^\/api\/repos\/[^/]+\/[^/]+\/pulls\/(\d+)(\/\w+)?$/)
+    switch (call) {
+      case 'GET /api/me':
+        return json(route, 200, { login: 'alwx' })
+      case 'GET /api/settings':
+        return json(route, 200, settings())
+      case 'PUT /api/settings':
+        repo = (request.postDataJSON() as { repo?: string }).repo?.toLowerCase() ?? repo
+        return json(route, 200, settings())
+      case 'GET /api/repos':
+        return json(route, 200, ['getsentry/sentry-cocoa', 'getsentry/sentry-react-native', 'getsentry/reviewer-react-native-sample'])
+      case 'GET /api/models':
+        return json(route, 200, ['anthropic/claude-sonnet-5.5', 'openai/gpt-6'])
+      case 'GET /api/events':
+        // The stream ends after these events, so the app connects again after 2 seconds.
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: `event: tasks\ndata: ${JSON.stringify(tasks)}\n\nevent: requests\ndata: ${JSON.stringify(requests())}\n\n`,
+        })
+      case `GET /api/repos/${sample}/classifications`:
+        return json(route, 200, [stored])
+    }
+    const row = pull && rows.find((item) => item.number === Number(pull[1]))
+    if (row && request.method() === 'GET') {
+      if (!pull[2]) return json(route, 200, pullRequest(row))
+      if (pull[2] === '/review' && row.number === 2) return json(route, 200, review)
+      if (pull[2] === '/classification' && row.number === 1) return json(route, 200, stored)
+    }
+    return json(route, 404, { error: 'Not found' })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Sign in to Sheepdog' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Create token on GitHub' })).toHaveAttribute('href', /scopes=repo,read:org/)
+  await page.screenshot({ path: join(screenshots, '1-sign-in.png') })
+
+  await page.getByLabel('GitHub token').fill('ghp_example')
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.locator('.sidebar-content').getByText('Select a repository')).toBeVisible()
+  expect(await page.evaluate(() => localStorage.length + sessionStorage.length + document.cookie.length)).toBe(0)
+
+  await page.getByRole('button', { name: /Select a repository/ }).click()
+  const picker = page.getByRole('dialog', { name: 'Repositories' })
+  await picker.getByRole('searchbox').fill('reviewer')
+  await picker.getByRole('button', { name: sample }).click()
+  await expect(picker).toBeHidden()
+
+  const safe = page.getByRole('region', { name: 'safe' })
+  await expect(safe.getByRole('heading')).toContainText('Approve and merge (1)')
+  await expect(page.getByRole('region', { name: 'manual' }).getByTitle(/changed after this classification/)).toHaveText('6')
+  await safe.getByText('Bump expo from 57.0.1 to 57.2.0').click()
+  await expect(page).toHaveTitle('Bump expo from 57.0.1 to 57.2.0')
+  await expect(page.getByRole('region', { name: 'Review' })).toContainText('Low risk')
+  await expect(page.getByRole('cell', { name: '57.2.0' })).toBeVisible()
+  await expect(page.getByText('<img src="x" onerror="alert(1)">')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'expo', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
+  await page.screenshot({ path: join(screenshots, '2-list-and-detail.png') })
+
+  await page.getByRole('button', { name: 'Approve and merge', exact: true }).click()
+  const confirmation = page.getByRole('dialog', { name: 'Approve and merge' })
+  await expect(confirmation.getByRole('listitem')).toHaveText('#2 Bump expo from 57.0.1 to 57.2.0')
+  await page.screenshot({ path: join(screenshots, '3-confirmation.png') })
+  await confirmation.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirmation).toBeHidden()
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const settingsDialog = page.getByRole('dialog', { name: 'Settings' })
+  await expect(settingsDialog.getByLabel('OpenRouter API key')).toHaveAttribute('placeholder', 'Saved on the server')
+  await expect(settingsDialog.getByRole('button', { name: /anthropic\/claude-sonnet-5.5/ })).toBeEnabled()
+  await page.screenshot({ path: join(screenshots, '4-settings.png') })
+
+  expect(writes).toEqual(['POST /api/session', 'PUT /api/settings'])
+})
