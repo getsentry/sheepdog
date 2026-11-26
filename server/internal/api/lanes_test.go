@@ -20,6 +20,7 @@ type fakePull struct {
 	author, title, headSHA, base, checkState string
 	additions, deletions                     int
 	files                                    []string
+	draft                                    bool
 	// mergeStates are the merge states of the PR reads of approve and merge in order. The last one repeats.
 	mergeStates         []string
 	autoMerge, noSquash bool
@@ -87,7 +88,7 @@ func (f *fakeGitHub) pullNode(id identity, mergeState string) string {
 		rollup = map[string]string{"state": p.checkState}
 	}
 	node, _ := json.Marshal(map[string]any{
-		"id": fmt.Sprintf("PR_%d", id.number), "number": id.number, "title": p.title, "url": "u", "isDraft": false,
+		"id": fmt.Sprintf("PR_%d", id.number), "number": id.number, "title": p.title, "url": "u", "isDraft": p.draft,
 		"updatedAt": "2026-01-01T00:00:00Z", "additions": p.additions, "deletions": p.deletions,
 		"headRefOid": p.headSHA, "baseRefName": p.base, "mergeStateStatus": mergeState,
 		"author":         map[string]string{"__typename": authorType(p.author), "login": p.author},

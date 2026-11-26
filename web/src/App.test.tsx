@@ -57,7 +57,7 @@ async function signedIn(handler: (seen: Seen) => ReturnType<Parameters<typeof fa
       case 'GET /api/me':
         return reply(200, { login: 'alwx' })
       case 'GET /api/settings':
-        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: true })
+        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: true, autoClassify: false })
       case 'GET /api/repos':
         return reply(200, ['acme/app'])
       case 'GET /api/models':
@@ -384,7 +384,7 @@ it('shows the update time in the footer, and a spinner on refresh until the next
   const footer = screen.getByRole('complementary').querySelector('footer')!
   const updates = within(footer).getByRole('region', { name: 'Updates' })
   const time = new Date('2027-01-15T08:00:00Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
-  expect(updates.textContent).toBe(`Updated at ${time}Auto-refresh`)
+  expect(updates.textContent).toBe(`Updated at ${time}Auto-refreshAuto-classify`)
   expect(screen.getAllByText(/Updated at/)).toHaveLength(1)
   expect(footer.lastElementChild?.textContent).toBe(' Settings')
   expect(within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' }).checked).toBe(true)
@@ -402,7 +402,7 @@ it('shows the update time in the footer, and a spinner on refresh until the next
   await emit(sources, { ...requests(rows, ['safe', 'docs']), fetchedAt: null })
   expect(refresh.hasAttribute('disabled')).toBe(false)
   expect(within(refresh).queryByRole('status')).toBeNull()
-  expect(updates.textContent).toBe('Not updated yetAuto-refresh')
+  expect(updates.textContent).toBe('Not updated yetAuto-refreshAuto-classify')
 })
 
 it('stops the refresh spinner and shows the error when the refresh fails', async () => {
@@ -466,4 +466,24 @@ it('links the sheepdog.yml of the repository on GitHub, and hides the link witho
 
   await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: null }))
   expect(within(header).queryByRole('link')).toBeNull()
+})
+
+it('turns auto-classify on, and says when Settings miss the key or the model', async () => {
+  const settings = { repo: 'acme/app', model: '', hasOpenRouterKey: false, starred: [], autoRefresh: true, autoClassify: false }
+  const { sent } = await signedIn((seen) => {
+    if (seen.path === '/api/settings') return reply(200, seen.method === 'PUT' ? { ...settings, autoClassify: true } : settings)
+  })
+  const updates = screen.getByRole('region', { name: 'Updates' })
+  const toggle = within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-classify' })
+  expect(toggle.checked).toBe(false)
+  expect(within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' }).checked).toBe(true)
+  expect(within(updates).queryByText(/needs an OpenRouter API key/)).toBeNull()
+
+  await act(async () => {
+    fireEvent.click(toggle)
+    await settle()
+  })
+  expect(toggle.checked).toBe(true)
+  expect(sent('PUT', '/api/settings').map((seen) => seen.body)).toEqual([{ autoClassify: true }])
+  expect(within(updates).getByText('Auto-classify needs an OpenRouter API key and a model in Settings.')).toBeTruthy()
 })

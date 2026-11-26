@@ -19,6 +19,8 @@ type Row struct {
 	github.Row
 	Lane           *Lane             `json:"lane,omitempty"`
 	Classification *CIClassification `json:"classification,omitempty"`
+	// autoClassify is true when auto classify may classify the row. See autoClassify.
+	autoClassify bool
 }
 
 // CIClassification is the score of the Sheepdog workflow for the head commit of a row.
@@ -105,6 +107,7 @@ func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user 
 			}
 			lane := rules.Evaluate(*laneRules, lanePR(row), classification)
 			out.Lane = &Lane{Name: lane.Name, Action: lane.Action, Notes: lane.Notes}
+			out.autoClassify = lane.NeedsClassification && !laneRules.Classification.CI && !row.IsDraft
 		}
 		result.Rows = append(result.Rows, out)
 	}

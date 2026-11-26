@@ -3,7 +3,7 @@ import { useAppState, useStore } from './context'
 import { dangerTone, elapsed, relativeTime } from './format'
 import { isOutdated, key, laneSections, shownClassification, starredFirst, type LaneSection } from './logic'
 import { currentRepo, isMerging, isSettingUp, isStarred } from './store'
-import type { PullLink, Row, Setup } from './types'
+import type { Preference, PullLink, Row, Setup } from './types'
 import {
   Capsule,
   ExternalLink,
@@ -411,6 +411,7 @@ function RefreshBar() {
   const state = useAppState()
   const { actions } = useStore()
   const fetchedAt = state.requests?.fetchedAt
+  const settings = state.settings
   return (
     <section className="refresh" aria-label="Updates">
       <div className="refresh-bar">
@@ -430,23 +431,35 @@ function RefreshBar() {
           {state.refreshing ? <Spinner label="Refreshing" /> : <RefreshIcon />}
         </button>
         <span className="spacer" />
-        <label className="switch">
-          <input
-            type="checkbox"
-            role="switch"
-            checked={state.settings?.autoRefresh ?? true}
-            disabled={state.settings === null}
-            onChange={(event) => void actions.setAutoRefresh(event.target.checked)}
-          />
-          Auto-refresh
-        </label>
+        <Switch name="autoRefresh" label="Auto-refresh" />
+        <Switch name="autoClassify" label="Auto-classify" />
       </div>
-      {state.refreshError && (
+      {settings?.autoClassify && (!settings.hasOpenRouterKey || !settings.model) && (
+        <p className="muted">Auto-classify needs an OpenRouter API key and a model in Settings.</p>
+      )}
+      {state.footerError && (
         <p className="error" role="alert">
-          {state.refreshError}
+          {state.footerError}
         </p>
       )}
     </section>
+  )
+}
+
+function Switch({ name, label }: { name: Preference; label: string }) {
+  const state = useAppState()
+  const { actions } = useStore()
+  return (
+    <label className="switch">
+      <input
+        type="checkbox"
+        role="switch"
+        checked={state.settings?.[name] ?? false}
+        disabled={state.settings === null}
+        onChange={(event) => void actions.setPreference(name, event.target.checked)}
+      />
+      {label}
+    </label>
   )
 }
 

@@ -13,7 +13,11 @@ export interface Settings {
   starred: string[]
   // Off when the server checks GitHub only on demand, not every 30 seconds.
   autoRefresh: boolean
+  // On when the server classifies the PRs where only a score is missing for an approve-and-automerge lane.
+  autoClassify: boolean
 }
+
+export type Preference = 'autoRefresh' | 'autoClassify'
 
 // A missing field stays unchanged. An empty openRouterKey deletes the key.
 export interface SettingsUpdate {
@@ -21,6 +25,7 @@ export interface SettingsUpdate {
   model?: string
   openRouterKey?: string
   autoRefresh?: boolean
+  autoClassify?: boolean
 }
 
 export const manualLane = 'manual'

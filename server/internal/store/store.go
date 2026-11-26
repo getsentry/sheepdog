@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS starred_repos (
 );
 CREATE TABLE IF NOT EXISTS user_prefs (
 	user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-	auto_refresh INTEGER NOT NULL
+	auto_refresh INTEGER NOT NULL,
+	auto_classify INTEGER NOT NULL DEFAULT 0
 );
 `
 
@@ -100,6 +101,13 @@ type Settings struct {
 	Model         *string
 	OpenRouterKey *string
 	AutoRefresh   *bool
+	AutoClassify  *bool
+}
+
+// Prefs are the switches of a user. A user without stored preferences has auto refresh on and auto classify off.
+type Prefs struct {
+	AutoRefresh  bool
+	AutoClassify bool
 }
 
 func Open(path string, key []byte) (*Store, error) {
@@ -125,6 +133,18 @@ func Open(path string, key []byte) (*Store, error) {
 	if !hasGitHubID {
 		db.Close()
 		return nil, fmt.Errorf("the database %s is from an older version without users.github_id: delete it and start again", path)
+	}
+	// A user_prefs table from before auto classify has only auto_refresh.
+	var hasAutoClassify bool
+	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info('user_prefs') WHERE name = 'auto_classify'`).Scan(&hasAutoClassify); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if !hasAutoClassify {
+		if _, err := db.Exec(`ALTER TABLE user_prefs ADD COLUMN auto_classify INTEGER NOT NULL DEFAULT 0`); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return &Store{db: db, sealer: s}, nil
 }
@@ -224,17 +244,23 @@ func (s *Store) UpdateSettings(ctx context.Context, userID int64, settings Setti
 			return err
 		}
 	}
+	if settings.AutoClassify != nil {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO user_prefs (user_id, auto_refresh, auto_classify) VALUES (?, 1, ?)
+			ON CONFLICT (user_id) DO UPDATE SET auto_classify = excluded.auto_classify`, userID, *settings.AutoClassify); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
-// AutoRefresh tells whether the server polls GitHub for the user on a timer. A user without preferences has it on.
-func (s *Store) AutoRefresh(ctx context.Context, userID int64) (bool, error) {
-	var on bool
-	err := s.db.QueryRowContext(ctx, `SELECT auto_refresh FROM user_prefs WHERE user_id = ?`, userID).Scan(&on)
+func (s *Store) Prefs(ctx context.Context, userID int64) (Prefs, error) {
+	var p Prefs
+	err := s.db.QueryRowContext(ctx, `SELECT auto_refresh, auto_classify FROM user_prefs WHERE user_id = ?`, userID).Scan(&p.AutoRefresh, &p.AutoClassify)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
+		return Prefs{AutoRefresh: true}, nil
 	}
-	return on, err
+	return p, err
 }
 
 // UserIDsWithRepo returns the users that have a repository selected.

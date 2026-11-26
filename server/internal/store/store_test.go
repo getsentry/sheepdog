@@ -638,41 +638,45 @@ func TestOpenAddsStarsToAnOlderDatabase(t *testing.T) {
 	}
 }
 
-func TestAutoRefreshByUser(t *testing.T) {
+func TestPrefsByUser(t *testing.T) {
 	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
 	ctx := context.Background()
 	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
 	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
-	autoRefresh := func(user int64) bool {
+	prefs := func(user int64) Prefs {
 		t.Helper()
-		on, err := s.AutoRefresh(ctx, user)
+		p, err := s.Prefs(ctx, user)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return on
+		return p
 	}
-	if !autoRefresh(alice) {
-		t.Error("auto refresh is off without a stored preference")
+	update := func(settings Settings) {
+		t.Helper()
+		if err := s.UpdateSettings(ctx, alice, settings); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p := prefs(alice); p != (Prefs{AutoRefresh: true}) {
+		t.Errorf("prefs without a stored row %+v", p)
 	}
 	off, on := false, true
-	if err := s.UpdateSettings(ctx, alice, Settings{AutoRefresh: &off}); err != nil {
-		t.Fatal(err)
+	update(Settings{AutoClassify: &on})
+	if p := prefs(alice); p != (Prefs{AutoRefresh: true, AutoClassify: true}) {
+		t.Errorf("prefs after auto classify on %+v", p)
 	}
-	if autoRefresh(alice) || !autoRefresh(bob) {
-		t.Errorf("auto refresh of alice %v and bob %v, want off and on", autoRefresh(alice), autoRefresh(bob))
+	update(Settings{AutoRefresh: &off})
+	if p := prefs(alice); p != (Prefs{AutoClassify: true}) {
+		t.Errorf("prefs after auto refresh off %+v", p)
+	}
+	if p := prefs(bob); p != (Prefs{AutoRefresh: true}) {
+		t.Errorf("bob prefs %+v", p)
 	}
 	repo := "acme/app"
-	if err := s.UpdateSettings(ctx, alice, Settings{Repo: &repo}); err != nil {
-		t.Fatal(err)
-	}
-	if autoRefresh(alice) {
-		t.Error("a change of the repository turned auto refresh on")
-	}
-	if err := s.UpdateSettings(ctx, alice, Settings{AutoRefresh: &on}); err != nil {
-		t.Fatal(err)
-	}
-	if !autoRefresh(alice) {
-		t.Error("auto refresh stayed off")
+	update(Settings{Repo: &repo})
+	update(Settings{AutoRefresh: &on, AutoClassify: &off})
+	if p := prefs(alice); p != (Prefs{AutoRefresh: true}) {
+		t.Errorf("prefs after both changes %+v", p)
 	}
 
 	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, alice); err != nil {
@@ -699,14 +703,48 @@ func TestOpenAddsPreferencesToAnOlderDatabase(t *testing.T) {
 	s.Close()
 
 	s = openStore(t, path, key)
-	if on, err := s.AutoRefresh(ctx, alice); err != nil || !on {
-		t.Errorf("auto refresh of the older database = %v, %v", on, err)
+	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{AutoRefresh: true}) {
+		t.Errorf("prefs of the older database = %+v, %v", p, err)
 	}
 	off := false
 	if err := s.UpdateSettings(ctx, alice, Settings{AutoRefresh: &off}); err != nil {
 		t.Fatal(err)
 	}
-	if on, err := s.AutoRefresh(ctx, alice); err != nil || on {
-		t.Errorf("auto refresh after the change = %v, %v", on, err)
+	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{}) {
+		t.Errorf("prefs after the change = %+v, %v", p, err)
+	}
+}
+
+func TestOpenAddsAutoClassifyToOlderPrefs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	key := newKey(t)
+	ctx := context.Background()
+	s, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	if _, err := s.db.Exec(`DROP TABLE user_prefs;
+		CREATE TABLE user_prefs (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, auto_refresh INTEGER NOT NULL);
+		INSERT INTO user_prefs (user_id, auto_refresh) VALUES (1, 0)`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s = openStore(t, path, key)
+	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{}) {
+		t.Errorf("prefs of the older table = %+v, %v; want the stored auto refresh off", p, err)
+	}
+	on := true
+	if err := s.UpdateSettings(ctx, alice, Settings{AutoClassify: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{AutoClassify: true}) {
+		t.Errorf("prefs after auto classify on = %+v, %v", p, err)
+	}
+	s.Close()
+	s = openStore(t, path, key)
+	if p, err := s.Prefs(ctx, alice); err != nil || p != (Prefs{AutoClassify: true}) {
+		t.Errorf("prefs after a second open = %+v, %v", p, err)
 	}
 }

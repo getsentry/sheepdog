@@ -8,6 +8,7 @@ import type {
   Review,
   Row,
   RunningTask,
+  Preference,
   ServerEvent,
   Settings,
   Requests,
@@ -33,9 +34,8 @@ export interface State {
   requests: Requests | null
   // From a click on refresh until the next requests event.
   refreshing: boolean
-  savingAutoRefresh: boolean
-  // The last failed refresh or change of auto refresh.
-  refreshError: string | null
+  // The last failed refresh or change of a switch in the footer.
+  footerError: string | null
   selection: number | null
   // Set while the event stream is down.
   connectionError: string | null
@@ -54,6 +54,7 @@ export interface State {
   // Keyed by the repository in lower case.
   settingUp: ReadonlySet<string>
   starring: ReadonlySet<string>
+  savingPreferences: ReadonlySet<string>
 }
 
 type Field =
@@ -66,13 +67,12 @@ type Field =
   | 'repositoriesError'
   | 'starError'
   | 'refreshing'
-  | 'savingAutoRefresh'
-  | 'refreshError'
+  | 'footerError'
   | 'selection'
   | 'connectionError'
   | 'error'
 
-type Pending = 'startingReviews' | 'startingClassifications' | 'merging' | 'settingUp' | 'starring'
+type Pending = 'startingReviews' | 'startingClassifications' | 'merging' | 'settingUp' | 'starring' | 'savingPreferences'
 
 export type Action =
   | { type: 'signedIn'; login: string }
@@ -109,8 +109,7 @@ export const initialState: State = {
   starError: null,
   requests: null,
   refreshing: false,
-  savingAutoRefresh: false,
-  refreshError: null,
+  footerError: null,
   selection: null,
   connectionError: null,
   error: null,
@@ -124,6 +123,7 @@ export const initialState: State = {
   merging: new Set(),
   settingUp: new Set(),
   starring: new Set(),
+  savingPreferences: new Set(),
 }
 
 export function currentRepo(state: State): string {
@@ -551,26 +551,27 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
     // A second click before the next requests event sends nothing.
     async refresh() {
       if (state.refreshing) return
-      set({ refreshing: true, refreshError: null })
+      set({ refreshing: true, footerError: null })
       try {
         await checked((client) => client.refresh())
       } catch (error) {
-        if (!(error instanceof Cancelled)) set({ refreshing: false, refreshError: message(error) })
+        if (!(error instanceof Cancelled)) set({ refreshing: false, footerError: message(error) })
       }
     },
 
-    // The switch changes at once, and goes back when the server refuses.
-    async setAutoRefresh(on: boolean) {
-      if (!state.settings || state.savingAutoRefresh) return
+    // The switch changes at once, and goes back when the server refuses. A second change before the answer sends nothing.
+    async setPreference(name: Preference, on: boolean) {
+      if (!state.settings || state.savingPreferences.has(name)) return
       const generation = state.generation
-      set({ settings: { ...state.settings, autoRefresh: on }, savingAutoRefresh: true, refreshError: null })
+      set({ settings: { ...state.settings, [name]: on }, footerError: null })
+      dispatch({ type: 'pending', set: 'savingPreferences', key: name, on: true })
       try {
-        await checked((client) => client.updateSettings({ autoRefresh: on }))
+        await checked((client) => client.updateSettings({ [name]: on }))
       } catch (error) {
         if (error instanceof Cancelled) return
-        if (state.settings) set({ settings: { ...state.settings, autoRefresh: !on }, refreshError: message(error) })
+        if (state.settings) set({ settings: { ...state.settings, [name]: !on }, footerError: message(error) })
       } finally {
-        if (generation === state.generation) set({ savingAutoRefresh: false })
+        if (generation === state.generation) dispatch({ type: 'pending', set: 'savingPreferences', key: name, on: false })
       }
     },
 

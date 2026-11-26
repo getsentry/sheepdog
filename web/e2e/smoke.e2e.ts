@@ -153,6 +153,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   let repo = ''
   let starred: string[] = []
   let autoRefresh = true
+  let autoClassify = false
   // The event streams after a refresh wait until the test checks the spinner.
   let refreshHeld = Promise.resolve()
   let releaseRefresh = () => {}
@@ -163,7 +164,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
 
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred, autoRefresh })
+  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred, autoRefresh, autoClassify })
   const requests = (): Requests =>
     repo === sample
       ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'] }
@@ -198,9 +199,10 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
       case 'GET /api/settings':
         return json(route, 200, settings())
       case 'PUT /api/settings': {
-        const update = request.postDataJSON() as { repo?: string; autoRefresh?: boolean }
+        const update = request.postDataJSON() as { repo?: string; autoRefresh?: boolean; autoClassify?: boolean }
         repo = update.repo?.toLowerCase() ?? repo
         autoRefresh = update.autoRefresh ?? autoRefresh
+        autoClassify = update.autoClassify ?? autoClassify
         return json(route, 200, settings())
       }
       case 'POST /api/review-requests/refresh':
@@ -348,7 +350,13 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await toggle.click()
   await expect(toggle).not.toBeChecked()
   await expect.poll(() => autoRefresh).toBe(false)
+  const classify = updates.getByRole('switch', { name: 'Auto-classify' })
+  await expect(classify).not.toBeChecked()
+  await classify.click()
+  await expect(classify).toBeChecked()
+  await expect.poll(() => autoClassify).toBe(true)
   await expect(updates.getByRole('alert')).toHaveCount(0)
+  await expect(updates.getByText(/needs an OpenRouter API key/)).toHaveCount(0)
   await page.locator('.sidebar').screenshot({ path: join(screenshots, '9-refresh-footer.png') })
-  expect(writes.slice(5)).toEqual(['PUT /api/settings', 'POST /api/review-requests/refresh', 'PUT /api/settings'])
+  expect(writes.slice(5)).toEqual(['PUT /api/settings', 'POST /api/review-requests/refresh', 'PUT /api/settings', 'PUT /api/settings'])
 })

@@ -7,7 +7,7 @@ import { approveAndMergeAction, type Classification, type Review, type RunningTa
 
 const notAllowed = 'This GitHub account is not allowed on this server'
 const badSession = 'The session is not valid. Sign in again'
-const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: true }
+const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: true, autoClassify: false }
 
 const task: RunningTask = {
   id: 'T1',
@@ -667,39 +667,44 @@ describe('store', () => {
     fails = true
     await s.actions.refresh()
     expect(s.state().refreshing).toBe(false)
-    expect(s.state().refreshError).toBe('Select a repository first')
+    expect(s.state().footerError).toBe('Select a repository first')
     fails = false
     const again = s.actions.refresh()
-    expect(s.state().refreshError).toBeNull()
+    expect(s.state().footerError).toBeNull()
     await again
     expect(s.paths('/refresh')).toHaveLength(3)
   })
 
-  it('changes auto refresh at once, and puts it back with the error of the server', async () => {
+  it('changes a switch at once, sends one request for a double change, and puts it back with the error of the server', async () => {
     const gate = new Gate()
     let fails = false
     const s = await signedIn(async ({ method, path }) => {
       if (method !== 'PUT' || path !== '/api/settings') return undefined
       await gate.wait()
-      return fails ? failure(500, 'Internal server error') : reply(200, { ...settings, autoRefresh: false })
+      return fails ? failure(500, 'Internal server error') : reply(200, settings)
     })
     await settle()
-    const off = s.actions.setAutoRefresh(false)
-    expect(s.state().settings?.autoRefresh).toBe(false)
-    await s.actions.setAutoRefresh(true)
+    const off = s.actions.setPreference('autoRefresh', false)
+    const classify = s.actions.setPreference('autoClassify', true)
+    expect(s.state().settings).toMatchObject({ autoRefresh: false, autoClassify: true })
+    await s.actions.setPreference('autoRefresh', true)
     gate.open()
-    await off
-    expect(s.state().settings?.autoRefresh).toBe(false)
-    expect(s.state().savingAutoRefresh).toBe(false)
+    await Promise.all([off, classify])
+    expect(s.state().settings).toMatchObject({ autoRefresh: false, autoClassify: true })
+    expect(s.state().savingPreferences.size).toBe(0)
 
     fails = true
-    await s.actions.setAutoRefresh(true)
-    expect(s.state().settings?.autoRefresh).toBe(false)
-    expect(s.state().refreshError).toBe('Internal server error')
-    expect(s.state().savingAutoRefresh).toBe(false)
+    await s.actions.setPreference('autoRefresh', true)
+    expect(s.state().settings).toMatchObject({ autoRefresh: false, autoClassify: true })
+    expect(s.state().footerError).toBe('Internal server error')
+    await s.actions.setPreference('autoClassify', false)
+    expect(s.state().settings?.autoClassify).toBe(true)
+    expect(s.state().savingPreferences.size).toBe(0)
     expect(s.server.seen.filter((seen) => seen.method === 'PUT').map((seen) => seen.body)).toEqual([
       { autoRefresh: false },
+      { autoClassify: true },
       { autoRefresh: true },
+      { autoClassify: false },
     ])
   })
 

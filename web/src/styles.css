@@ -358,8 +358,9 @@ a {
 
 .refresh-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 4px 10px;
   min-height: 26px;
 }
 

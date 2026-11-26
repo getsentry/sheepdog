@@ -234,12 +234,12 @@ func TestEvaluateSample(t *testing.T) {
 		},
 		{
 			name: "missing classification",
-			want: Lane{Name: Manual, Action: ActionSuggest, Notes: []string{"Needs a classification of the current commit"}},
+			want: Lane{Name: Manual, Action: ActionSuggest, Notes: []string{"Needs a classification of the current commit"}, NeedsClassification: true},
 		},
 		{
 			name:           "classification of an older commit",
 			classification: &Classification{HeadSHA: "older", Score: 1},
-			want:           Lane{Name: Manual, Action: ActionSuggest, Notes: []string{"Needs a classification of the current commit"}},
+			want:           Lane{Name: Manual, Action: ActionSuggest, Notes: []string{"Needs a classification of the current commit"}, NeedsClassification: true},
 		},
 		{
 			name:           "major update",
@@ -357,5 +357,49 @@ func TestEvaluateWithoutActionLanes(t *testing.T) {
 	want := Lane{Name: Manual, Action: ActionSuggest, Notes: []string{}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestNeedsClassification(t *testing.T) {
+	rules, err := Parse([]byte(`version: 1
+lanes:
+  docs:
+    paths: ["docs/**"]
+  safe:
+    max_changed_lines: 50
+    max_score: 2
+    require_checks: true
+    action: approve-and-automerge
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := PR{Author: "alice", Additions: 10, Files: []string{"src/a.go"}, TotalFiles: 1, HeadSHA: "head", CheckState: "SUCCESS"}
+	cases := []struct {
+		name           string
+		edit           func(*PR)
+		classification *Classification
+		want           bool
+	}{
+		{name: "only the score is missing", want: true},
+		{name: "score of an older commit", classification: &Classification{HeadSHA: "older", Score: 1}, want: true},
+		{name: "score of the head commit", classification: &Classification{HeadSHA: "head", Score: 5}},
+		{name: "checks are not green", edit: func(pr *PR) { pr.CheckState = "PENDING" }},
+		{name: "too many lines", edit: func(pr *PR) { pr.Additions = 90 }},
+		{name: "an earlier lane matches", edit: func(pr *PR) { pr.Files = []string{"docs/a.md"} }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pr := pr
+			if c.edit != nil {
+				c.edit(&pr)
+			}
+			if got := Evaluate(rules, pr, c.classification); got.NeedsClassification != c.want {
+				t.Errorf("got %+v, want NeedsClassification %v", got, c.want)
+			}
+		})
+	}
+	if got := Evaluate(rules, pr, &Classification{HeadSHA: "head", Score: 1}); got.Name != "safe" || got.NeedsClassification {
+		t.Errorf("a PR in the approve lane %+v", got)
 	}
 }

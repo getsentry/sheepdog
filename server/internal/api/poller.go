@@ -120,6 +120,9 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 		if rejected {
 			return
 		}
+		if err == nil {
+			s.autoClassify(ctx, user.ID, user.Repo, polled.Rows)
+		}
 		ticker.Reset(s.pollInterval)
 		if !s.waitPoll(ctx, run, user.ID, ticker.C) {
 			return
@@ -137,11 +140,11 @@ func (s *Server) waitPoll(ctx context.Context, run *pollRun, userID int64, tick 
 		case <-run.now:
 			return true
 		case <-tick:
-			on, err := s.store.AutoRefresh(ctx, userID)
+			prefs, err := s.store.Prefs(ctx, userID)
 			if err != nil && ctx.Err() == nil {
 				log.Printf("read auto refresh of user %d: %v", userID, err)
 			}
-			if on {
+			if prefs.AutoRefresh {
 				return true
 			}
 		}

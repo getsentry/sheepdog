@@ -201,13 +201,21 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // fakeOpenRouter accepts only aliceKey. The model slow/model answers only after the request ends.
 type fakeOpenRouter struct {
-	mu        sync.Mutex
-	bodies    []string
-	started   chan struct{}
-	cancelled chan struct{}
+	mu sync.Mutex
+	// classifications counts the classification requests, also the refused ones.
+	classifications int
+	bodies          []string
+	started         chan struct{}
+	cancelled       chan struct{}
 }
 
 func (f *fakeOpenRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	if bytes.Contains(body, []byte(`"name":"classification"`)) {
+		f.mu.Lock()
+		f.classifications++
+		f.mu.Unlock()
+	}
 	if r.Header.Get("Authorization") != "Bearer "+aliceKey {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -218,7 +226,6 @@ func (f *fakeOpenRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/models/user":
 		io.WriteString(w, `{"data":[{"id":"alice/model","supported_parameters":["structured_outputs"]},{"id":"plain/model","supported_parameters":[]}]}`)
 	case "/chat/completions":
-		body, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.bodies = append(f.bodies, string(body))
 		f.mu.Unlock()

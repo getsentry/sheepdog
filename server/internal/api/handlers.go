@@ -130,6 +130,7 @@ type settingsResponse struct {
 	HasOpenRouterKey bool     `json:"hasOpenRouterKey"`
 	Starred          []string `json:"starred"`
 	AutoRefresh      bool     `json:"autoRefresh"`
+	AutoClassify     bool     `json:"autoClassify"`
 }
 
 func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -138,13 +139,14 @@ func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user stor
 		internalError(w, err)
 		return
 	}
-	autoRefresh, err := s.store.AutoRefresh(r.Context(), user.ID)
+	prefs, err := s.store.Prefs(r.Context(), user.ID)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, settingsResponse{
-		Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred, AutoRefresh: autoRefresh,
+		Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred,
+		AutoRefresh: prefs.AutoRefresh, AutoClassify: prefs.AutoClassify,
 	})
 }
 
@@ -158,6 +160,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 		Model         *string `json:"model"`
 		OpenRouterKey *string `json:"openRouterKey"`
 		AutoRefresh   *bool   `json:"autoRefresh"`
+		AutoClassify  *bool   `json:"autoClassify"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -176,20 +179,19 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 			return
 		}
 	}
-	turnedOn := false
-	if body.AutoRefresh != nil && *body.AutoRefresh {
-		wasOn, err := s.store.AutoRefresh(r.Context(), user.ID)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		turnedOn = !wasOn
+	before, err := s.store.Prefs(r.Context(), user.ID)
+	if err != nil {
+		internalError(w, err)
+		return
 	}
-	err := s.store.UpdateSettings(r.Context(), user.ID, store.Settings{
+	turnedOn := body.AutoRefresh != nil && *body.AutoRefresh && !before.AutoRefresh ||
+		body.AutoClassify != nil && *body.AutoClassify && !before.AutoClassify
+	err = s.store.UpdateSettings(r.Context(), user.ID, store.Settings{
 		Repo:          body.Repo,
 		Model:         body.Model,
 		OpenRouterKey: body.OpenRouterKey,
 		AutoRefresh:   body.AutoRefresh,
+		AutoClassify:  body.AutoClassify,
 	})
 	if err != nil {
 		internalError(w, err)
@@ -470,7 +472,17 @@ func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, use
 		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
 		return
 	}
-	task, err := s.tasks.Start(user.ID, tasks.ClassifyWork{
+	task, err := s.tasks.Start(user.ID, s.classifyWork(user, repo, number))
+	if errors.Is(err, tasks.ErrRunning) {
+		writeError(w, http.StatusConflict, "A classification of this pull request is already running")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, task)
+}
+
+// classifyWork polls at once after a stored classification, so that the lane changes without a wait.
+func (s *Server) classifyWork(user store.User, repo string, number int) tasks.ClassifyWork {
+	return tasks.ClassifyWork{
 		Store:      s.store,
 		GitHub:     github.New(s.cfg.GitHubURL, user.GitHubToken),
 		OpenRouter: openrouter.New(s.cfg.OpenRouterURL, user.OpenRouterKey),
@@ -485,12 +497,7 @@ func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, use
 				s.pollNow(user.ID)
 			}
 		},
-	})
-	if errors.Is(err, tasks.ErrRunning) {
-		writeError(w, http.StatusConflict, "A classification of this pull request is already running")
-		return
 	}
-	writeJSON(w, http.StatusAccepted, task)
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, _ *http.Request, user store.User) {

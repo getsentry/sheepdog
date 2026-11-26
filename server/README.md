@@ -157,7 +157,7 @@ classification:
 - `authors` matches the login of the PR author. Upper and lower case are the same. An entry that ends with `[bot]`, for example `dependabot[bot]`, matches only a GitHub App author with that name, so that a person with the login `dependabot` does not match. An entry without `[bot]` matches any author with that login. In YAML, write an entry with `[bot]` in quotes.
 - `paths` matches when every changed file matches one of the globs. `**` matches any number of directories.
 - `max_changed_lines` is the highest number of added plus deleted lines.
-- `max_score` is the highest classification score. Only a classification of the current head commit counts. The server does not classify by itself. Click "Classify" in the web app, or classify in CI. See [Classification in CI](#classification-in-ci).
+- `max_score` is the highest classification score. Only a classification of the current head commit counts. Click "Classify" in the web app, turn on [auto classify](#auto-classify), or classify in CI. See [Classification in CI](#classification-in-ci).
 - `no_major_bumps: true` matches a title like `Bump expo from 57.0.1 to 57.2.0`, where the first number of both versions is the same. A title without this form does not match.
 - `require_checks: true` matches when all checks of the head commit passed. A PR without checks does not match.
 - `action` is `suggest` (the default) or `approve-and-automerge`.
@@ -204,6 +204,21 @@ The routes for a PR, its review, its classification, the classifications of the 
 4. It returns 201 with `{"number", "url"}` of the PR, and checks GitHub again at once.
 
 The server never commits to the default branch, because rulesets in many repositories require a PR for every change there. The PR needs a review like every other PR of the repository. A GitHub error, for example for a user without write access, gives status 502 with the GitHub text. The server cannot add the workflow `.github/workflows/sheepdog.yml`, because a token needs the scope `workflow` for files in `.github/workflows`. The template explains how to add it.
+
+## Auto classify
+
+Auto classify is off for each user until the user turns it on with `PUT /api/settings` and `{"autoClassify": true}`, or with the "Auto-classify" switch at the bottom of the sidebar. Each classification is a request to OpenRouter with the key of the user, so the user pays for it.
+
+After each poll, the server then classifies a PR only when all of these conditions are true:
+
+1. The user has an OpenRouter key and a model in Settings.
+2. A classification of the head commit is the only missing condition of an `approve-and-automerge` lane before the lane of the PR. For example, the server does not classify a PR with too many changed lines or with checks that are not green.
+3. The PR is not a draft.
+4. The rules file on the base branch does not have `classification.ci: true`. Then the score comes from CI.
+5. The server did not start a classification of this head commit for the user before. A failed or stopped classification runs again only after a new commit, or after a restart of the server.
+6. The user has fewer than 2 classifications that run. The server starts the next one at the next poll.
+
+The classifications show in the running tasks, and the user can stop them. Auto classify does not approve or merge. "Approve and merge" still needs a click. When the user turns auto classify on, the server checks GitHub at once.
 
 ## Classification in CI
 
@@ -301,7 +316,7 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `DELETE /api/session` | Sign out. Ends this session, closes its event streams, and deletes the session cookie. Returns 204. |
 | `DELETE /api/sessions` | Sign out on all devices. Ends every session of the user, closes all its event streams, and deletes the session cookie. Returns 204. |
 | `GET /api/me` | Returns `{"login"}`. |
-| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, `starred`, and `autoRefresh`. `PUT` takes `repo`, `model`, `openRouterKey`, and `autoRefresh`. An empty key deletes it. `starred` is the list of starred repositories in name order, and an empty list when there is none. |
+| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, `starred`, `autoRefresh`, and `autoClassify`. `PUT` takes `repo`, `model`, `openRouterKey`, `autoRefresh`, and `autoClassify`. An empty key deletes it. `starred` is the list of starred repositories in name order, and an empty list when there is none. |
 | `GET /api/repos` | The repositories of the user. |
 | `PUT /api/repos/{owner}/{name}/star`, `DELETE /api/repos/{owner}/{name}/star` | Add or remove a star of the repository. Returns the settings. A second `PUT` or `DELETE` changes nothing. A user can star at most 200 repositories. One more star gets status 409. |
 | `GET /api/models` | The OpenRouter models that support structured outputs. |

@@ -73,7 +73,12 @@ type Lane struct {
 	Action string
 	Labels []string
 	Notes  []string
+	// NeedsClassification is true when a classification of the head commit is the only missing condition
+	// of an approve-and-automerge lane before the lane of the PR.
+	NeedsClassification bool
 }
+
+const needsClassification = "Needs a classification of the current commit"
 
 var laneKeys = map[string]bool{
 	"authors": true, "paths": true, "max_changed_lines": true, "max_score": true,
@@ -198,6 +203,7 @@ func Evaluate(rules Rules, pr PR, classification *Classification) Lane {
 	}
 
 	result := Lane{Name: Manual, Action: ActionSuggest}
+	needs := false
 	for _, lane := range rules.Lanes {
 		matched, failed := check(lane, pr, classification)
 		if len(failed) == 0 {
@@ -208,7 +214,9 @@ func Evaluate(rules Rules, pr PR, classification *Classification) Lane {
 			}
 			break
 		}
+		needs = needs || lane.Action == ActionApproveAndAutomerge && len(failed) == 1 && failed[0] == needsClassification
 	}
+	result.NeedsClassification = needs
 
 	var closest []string
 	found := false
@@ -262,7 +270,7 @@ func check(lane LaneRule, pr PR, classification *Classification) (matched, faile
 	if lane.MaxScore != nil {
 		switch {
 		case classification == nil || classification.HeadSHA == "" || classification.HeadSHA != pr.HeadSHA:
-			failed = append(failed, "Needs a classification of the current commit")
+			failed = append(failed, needsClassification)
 		default:
 			result(classification.Score <= *lane.MaxScore,
 				fmt.Sprintf("Score %d", classification.Score),
