@@ -2,3 +2,5 @@
 *.db
 *.db-shm
 *.db-wal
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep

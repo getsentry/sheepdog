@@ -16,9 +16,12 @@ import (
 	"sheepdog/internal/github"
 	"sheepdog/internal/store"
 	"sheepdog/internal/tasks"
+	"sheepdog/internal/webui"
 )
 
 const maxBodyBytes = 64 << 10
+
+const sessionCookie = "sheepdog_session"
 
 type Server struct {
 	ctx   context.Context
@@ -134,14 +137,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks", s.authed(s.listTasks))
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.authed(s.cancelTask))
 	mux.HandleFunc("GET /api/events", s.authed(s.events))
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "No API route has this method and path")
+	})
+	mux.Handle("/", webui.Handler())
 	return mux
 }
 
 func (s *Server) authed(handler func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, ok := bearerToken(r)
+		token, fromCookie, ok := sessionToken(r)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "Sign in first")
+			return
+		}
+		// The browser sends the cookie also with requests of other sites, so a cookie request that changes state must come from this origin.
+		if fromCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("Origin") != origin(r) {
+			writeError(w, http.StatusForbidden, crossOrigin)
 			return
 		}
 		id, err := s.store.SessionUserID(r.Context(), token)
@@ -166,20 +178,70 @@ func (s *Server) authed(handler func(http.ResponseWriter, *http.Request, store.U
 	}
 }
 
-func bearerToken(r *http.Request) (string, bool) {
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	token = strings.TrimSpace(token)
-	return token, ok && token != ""
+// sessionToken reads the session from the Authorization header, else from the cookie of the web app.
+func sessionToken(r *http.Request) (token string, fromCookie, ok bool) {
+	if token, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); found {
+		token = strings.TrimSpace(token)
+		return token, false, token != ""
+	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil || cookie.Value == "" {
+		return "", false, false
+	}
+	return cookie.Value, true, true
+}
+
+// setSessionCookie sets the session for the web app, or deletes the cookie when session is empty.
+// The server ends idle sessions itself, so the cookie lives as long as browsers allow.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, session string) {
+	maxAge := 400 * 24 * 60 * 60
+	if session == "" {
+		maxAge = -1
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    session,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   isHTTPS(r),
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// isHTTPS trusts X-Forwarded-Proto only from a reverse proxy on the same host.
+func isHTTPS(r *http.Request) bool {
+	return r.TLS != nil || (loopbackPeer(r) && r.Header.Get("X-Forwarded-Proto") == "https")
+}
+
+// origin is the origin that a browser sends for a page of this server.
+func origin(r *http.Request) string {
+	if isHTTPS(r) {
+		return "https://" + r.Host
+	}
+	return "http://" + r.Host
+}
+
+const crossOrigin = "The request comes from another origin"
+
+func peerHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func loopbackPeer(r *http.Request) bool {
+	ip := net.ParseIP(peerHost(r))
+	return ip != nil && ip.IsLoopback()
 }
 
 // clientIP trusts X-Forwarded-For only from a reverse proxy on the same host. Its last entry is the address that the proxy saw.
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+	host := peerHost(r)
 	forwarded := r.Header.Values("X-Forwarded-For")
-	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() || len(forwarded) == 0 {
+	if !loopbackPeer(r) || len(forwarded) == 0 {
 		return host
 	}
 	entries := strings.Split(forwarded[len(forwarded)-1], ",")

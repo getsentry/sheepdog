@@ -17,6 +17,10 @@ import (
 const repoCacheTTL = 10 * time.Minute
 
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
+	if o := r.Header.Get("Origin"); o != "" && o != origin(r) {
+		writeError(w, http.StatusForbidden, crossOrigin)
+		return
+	}
 	ip := signInKey(clientIP(r))
 	if s.signIns.blocked(ip) {
 		writeError(w, http.StatusTooManyRequests, "Too many failed sign-in attempts. Try again in a minute")
@@ -80,6 +84,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) bool {
 			return false
 		}
 	}
+	setSessionCookie(w, r, session)
 	writeJSON(w, http.StatusOK, map[string]string{"sessionToken": session, "login": viewer.Login})
 	return true
 }
@@ -93,12 +98,13 @@ func hasScopes(scopes []string) bool {
 }
 
 func (s *Server) signOut(w http.ResponseWriter, r *http.Request, user store.User) {
-	token, _ := bearerToken(r)
+	token, _, _ := sessionToken(r)
 	if err := s.store.DeleteSession(r.Context(), token); err != nil {
 		internalError(w, err)
 		return
 	}
 	s.hub.close(user.ID, token)
+	setSessionCookie(w, r, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -108,6 +114,7 @@ func (s *Server) signOutEverywhere(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 	s.hub.close(user.ID, "")
+	setSessionCookie(w, r, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 

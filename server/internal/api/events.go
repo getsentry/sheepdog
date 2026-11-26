@@ -127,7 +127,7 @@ func (h *hub) take(sub *subscriber) []event {
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request, user store.User) {
-	session, _ := bearerToken(r)
+	session, _, _ := sessionToken(r)
 	sub, unsubscribe, ok := s.hub.subscribe(user.ID, session)
 	if !ok {
 		writeError(w, http.StatusTooManyRequests, "Too many open event streams. Close another client and try again")

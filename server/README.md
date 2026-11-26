@@ -19,7 +19,7 @@ The app sends the token to the server once. To stop the access of the server, de
 
 The server knows a user by the numeric GitHub user ID, not by the login. If a user changes the login, the data stays with the user at the next sign-in. If another person later takes the old login, that person gets a new, empty user.
 
-A sign-in gives the client a session token. Each device has its own session, and a new sign-in does not end the sessions on other devices. A session ends after 30 days without a request. The server deletes ended sessions at start and every hour.
+A sign-in gives the client a session token. It also sets the session token as the cookie `sheepdog_session` for the web app. Each device has its own session, and a new sign-in does not end the sessions on other devices. A session ends after 30 days without a request. The server deletes ended sessions at start and every hour.
 
 If you lose a device, delete the GitHub token on GitHub, sign in with a new token, and use `DELETE /api/sessions` to end the sessions on all devices.
 
@@ -64,6 +64,18 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/sheepdog
 
 The server stops on SIGINT or SIGTERM. It cancels the running reviews and classifications. Finished ones stay in the database. A request that waits for GitHub or OpenRouter at that time gets status 503 with the text `The server is shutting down`.
 
+## Web app
+
+The server serves the web app at `/` and at every path that does not start with `/api/`. The `sheepdog` binary contains the web app: `go build` embeds the files in `internal/webui/dist` into it. Git keeps only `internal/webui/dist/.gitkeep`, so a fresh checkout builds without the web app. Then the server answers these paths with status 503 and a short page that says how to build the web app.
+
+A path that is not a file gets `index.html`, so that the routes of the web app work after a reload. A missing file in `assets/` gets status 404. The files in `assets/` have names with a content hash, so they get `Cache-Control: public, max-age=31536000, immutable`. All other files, also `index.html`, get `Cache-Control: no-cache`.
+
+Every web response has these headers:
+
+- `Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' data: https://avatars.githubusercontent.com; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'`
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: no-referrer`
+
 ## TLS
 
 The server itself does not use TLS. GitHub tokens and session tokens go over the network, so never make the plain HTTP port reachable from other computers. Use one of these setups:
@@ -83,6 +95,8 @@ sheepdog.example.com {
 ```
 
 The Mac app accepts plain `http://` only for `localhost`, `127.0.0.1`, `::1`, and other IP addresses, because macOS blocks plain HTTP to host names. For a host name, for example a Tailscale name, the server address must start with `https://`.
+
+The session cookie has `Secure` only when the request came over HTTPS. The server itself does not use TLS, so it trusts the header `X-Forwarded-Proto: https` from a reverse proxy on the same computer. The server ignores the header on other connections. The reverse proxy must also keep the `Host` header of the browser, because the server compares the `Origin` header with it. Caddy does both by default.
 
 After 10 failed sign-ins in a minute from one client IP address, the server rejects sign-ins from that address with status 429 for the rest of the minute. Successful sign-ins do not count. If the connection comes from a loopback address, for example from a reverse proxy on the same computer, the server uses the last address in the `X-Forwarded-For` header as the client address. Caddy sets this header by default. The server ignores the header on other connections, for example on a Tailscale address.
 
@@ -217,7 +231,9 @@ For the lanes, the server uses the CI score of the head commit. If there is no C
 
 ## API
 
-All requests and responses use JSON. An error response has the form `{"error": "text"}`. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>`. A missing, unknown, or ended session gets status 401. A login that is no longer in `SHEEPDOG_ALLOWED_LOGINS` gets status 403.
+All requests and responses use JSON. An error response has the form `{"error": "text"}`. An unknown route under `/api/` gets status 404. Each request except `POST /api/session` needs the header `Authorization: Bearer <sessionToken>` or the cookie `sheepdog_session`. If a request has both, the server uses the header. A missing, unknown, or ended session gets status 401. A login that is no longer in `SHEEPDOG_ALLOWED_LOGINS` gets status 403.
+
+The browser sends the cookie by itself, so the server protects cookie requests against other sites. The cookie has `HttpOnly`, `SameSite=Strict`, and `Path=/`. A cookie request with a method other than `GET` or `HEAD` gets status 403 unless its `Origin` header is the origin of the server, for example `https://sheepdog.example.com`. A request without an `Origin` header gets 403 too. `POST /api/session` with an `Origin` header of another origin, also `null`, gets status 403. Requests with the `Authorization` header do not need an `Origin` header.
 
 GitHub repository names ignore case. The server changes them to lower case, so settings, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
 
@@ -225,9 +241,9 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 
 | Route | Purpose |
 | --- | --- |
-| `POST /api/session` | Sign in with `{"githubToken"}`. Returns `{"sessionToken", "login"}`. |
-| `DELETE /api/session` | Sign out. Ends this session and closes its event streams. Returns 204. |
-| `DELETE /api/sessions` | Sign out on all devices. Ends every session of the user and closes all its event streams. Returns 204. |
+| `POST /api/session` | Sign in with `{"githubToken"}`. Returns `{"sessionToken", "login"}`, and sets the session cookie. |
+| `DELETE /api/session` | Sign out. Ends this session, closes its event streams, and deletes the session cookie. Returns 204. |
+| `DELETE /api/sessions` | Sign out on all devices. Ends every session of the user, closes all its event streams, and deletes the session cookie. Returns 204. |
 | `GET /api/me` | Returns `{"login"}`. |
 | `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, and `hasOpenRouterKey`. `PUT` also takes `openRouterKey`. An empty key deletes it. |
 | `GET /api/repos` | The repositories of the user. |
