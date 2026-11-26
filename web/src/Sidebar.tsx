@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { useAppState, useStore } from './context'
 import { dangerTone, elapsed, relativeTime } from './format'
 import { isOutdated, key, laneSections, shownClassification, type LaneSection } from './logic'
-import { currentRepo, isMerging } from './store'
-import type { Row } from './types'
-import { Capsule, GearIcon, Modal, SearchList, Spinner, StopIcon, useNow } from './ui'
+import { currentRepo, isMerging, isSettingUp } from './store'
+import type { PullLink, Row, Setup } from './types'
+import { Capsule, ExternalLink, GearIcon, Modal, SearchList, Spinner, StopIcon, useNow } from './ui'
 
 export function Sidebar({
   onApproveAndMerge,
@@ -38,6 +38,11 @@ export function Sidebar({
           <>
             <Banner />
             <p className="placeholder">Select a repository</p>
+          </>
+        ) : state.requests?.setup ? (
+          <>
+            <Banner />
+            <SetupWarning repo={repo} setup={state.requests.setup} />
           </>
         ) : (
           <RequestList onApproveAndMerge={onApproveAndMerge} />
@@ -98,6 +103,130 @@ function Banner() {
     <p className="banner" role="alert">
       {error}
     </p>
+  )
+}
+
+function SetupWarning({ repo, setup }: { repo: string; setup: Setup }) {
+  const [dialogOpen, setDialogOpen] = useState(false)
+  return (
+    <section className="setup" aria-label="Setup">
+      <h2>No Sheepdog rules</h2>
+      <p>
+        {repo} has no <code>.github/sheepdog.yml</code> on its default branch <code>{setup.defaultBranch}</code>.
+        Sheepdog works only with repositories that have this file.
+      </p>
+      {setup.pullRequest ? (
+        <p>
+          Sheepdog waits for the merge of{' '}
+          <ExternalLink href={setup.pullRequest.url}>pull request #{setup.pullRequest.number}</ExternalLink>, which adds
+          the file.
+        </p>
+      ) : (
+        <button type="button" className="primary" onClick={() => setDialogOpen(true)}>
+          Create sheepdog.yml
+        </button>
+      )}
+      {dialogOpen && <SetupDialog repo={repo} onClose={() => setDialogOpen(false)} />}
+    </section>
+  )
+}
+
+// Mounted only while open. It loads the template again each time, and sends nothing before "Open pull request".
+function SetupDialog({ repo, onClose }: { repo: string; onClose: () => void }) {
+  const state = useAppState()
+  const { actions } = useStore()
+  const [content, setContent] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [created, setCreated] = useState<PullLink | null>(null)
+  const sending = isSettingUp(state, repo)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const template = await actions.setupTemplate(repo)
+        if (!cancelled && template !== null) setContent(template)
+      } catch (failure) {
+        if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [actions, repo])
+
+  async function openPullRequest() {
+    if (content === null) return
+    setError(null)
+    try {
+      const link = await actions.setUp(repo, content)
+      if (link) setCreated(link)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    }
+  }
+
+  return (
+    <Modal label="Create sheepdog.yml" className="setup-dialog" onClose={onClose}>
+      <h2>Create .github/sheepdog.yml</h2>
+      {created ? (
+        <>
+          <p>
+            Sheepdog opened <ExternalLink href={created.url}>pull request #{created.number}</ExternalLink>. After its
+            merge, Sheepdog shows the review requests of {repo}.
+          </p>
+          <div className="buttons">
+            <span className="spacer" />
+            <button type="button" className="primary" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="muted">
+            Sheepdog opens a pull request from the branch <code>sheepdog/setup</code> that adds this file. Edit the
+            rules before you open it.
+          </p>
+          {content === null ? (
+            error === null && (
+              <div className="center">
+                <Spinner />
+              </div>
+            )
+          ) : (
+            <textarea
+              aria-label="sheepdog.yml"
+              spellCheck={false}
+              value={content}
+              disabled={sending}
+              onChange={(event) => setContent(event.target.value)}
+            />
+          )}
+          {error && <p className="error">{error}</p>}
+          <div className="buttons">
+            <span className="spacer" />
+            <button type="button" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={content === null || sending}
+              onClick={() => void openPullRequest()}
+            >
+              {sending ? (
+                <>
+                  <Spinner label="Opening" /> Opening…
+                </>
+              ) : (
+                'Open pull request'
+              )}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   )
 }
 

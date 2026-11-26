@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { key } from './logic'
-import { createStore, currentRepo, isClassifying, isMerging, isReviewing } from './store'
+import { createStore, currentRepo, isClassifying, isMerging, isReviewing, isSettingUp } from './store'
 import { failure, fakeEventSources, fakeFetch, fakeTimers, Gate, reply, settle, type Reply, type Seen } from './test/fakes'
 import { laneRow, requests } from './test/rows'
 import { approveAndMergeAction, type Classification, type Review, type RunningTask } from './types'
@@ -549,6 +549,61 @@ describe('store', () => {
     await s.actions.cancelTask('T2')
     expect(s.state().tasks.map((t) => t.id)).toEqual(['T3'])
     expect(s.state().error).toBeNull()
+  })
+
+  it('loads no classifications for a repository without rules, and hides the 409 that comes before the setup', async () => {
+    const gated = 'acme/new has no .github/sheepdog.yml on main. Set it up first'
+    const s = await signedIn(({ path }) => (path === '/api/repos/acme/new/classifications' ? failure(409, gated) : undefined))
+    s.connect()
+    s.actions.select(1)
+    const setup = { defaultBranch: 'main', pullRequest: null }
+    s.sources.last().emit('requests', { ...requests([]), setup })
+    expect(s.state().selection).toBeNull()
+
+    // A change of the repository first sends an empty result without setup.
+    s.sources.last().emit('requests', requests([], [], 'acme/new'))
+    await settle()
+    s.sources.last().emit('requests', { ...requests([], [], 'acme/new'), setup })
+    await settle()
+    expect(s.paths('/api/repos/acme/new/classifications')).toHaveLength(1)
+    expect(s.state().error).toBeNull()
+
+    // The merged setup PR gives a result without setup, so the classifications load again.
+    s.sources.last().emit('requests', requests([], [], 'acme/new'))
+    await settle()
+    expect(s.paths('/api/repos/acme/new/classifications')).toHaveLength(2)
+  })
+
+  it('sends one setup at a time, and drops the setup result of an old session', async () => {
+    const gate = new Gate()
+    const pr = { number: 12, url: 'https://github.com/acme/new/pull/12' }
+    const s = await signedIn(async ({ method, path }) => {
+      if (method !== 'POST' || path !== '/api/repos/acme/new/setup') return undefined
+      await gate.wait()
+      return reply(201, pr)
+    })
+    const first = s.actions.setUp('acme/new', 'version: 1\n')
+    expect(isSettingUp(s.state(), 'ACME/new')).toBe(true)
+    expect(await s.actions.setUp('acme/new', 'version: 1\n')).toBeNull()
+    gate.open()
+    expect(await first).toEqual(pr)
+    expect(isSettingUp(s.state(), 'acme/new')).toBe(false)
+    expect(s.paths('/api/repos/acme/new/setup').map((p) => p.body)).toEqual([{ content: 'version: 1\n' }])
+
+    const held = new Gate()
+    const late = await signedIn(async ({ path }) => {
+      if (path !== '/api/repos/acme/new/setup/template' && path !== '/api/repos/acme/new/setup') return undefined
+      await held.wait()
+      return path.endsWith('/template') ? reply(200, { content: 'version: 1\n' }) : reply(201, pr)
+    })
+    const template = late.actions.setupTemplate('acme/new')
+    const setUp = late.actions.setUp('acme/new', 'version: 1\n')
+    await late.actions.signOut()
+    await late.actions.start()
+    held.open()
+    expect(await template).toBeNull()
+    expect(await setUp).toBeNull()
+    expect(late.state().settingUp.size).toBe(0)
   })
 
   it('closes the open PR when the repository changes', async () => {

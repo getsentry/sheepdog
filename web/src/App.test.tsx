@@ -3,9 +3,9 @@ import { afterEach, beforeAll, expect, it } from 'vitest'
 import { App } from './App'
 import { StoreProvider } from './context'
 import { createStore } from './store'
-import { failure, fakeEventSources, fakeFetch, reply, settle, type Seen } from './test/fakes'
+import { failure, fakeEventSources, fakeFetch, Gate, reply, settle, type Seen } from './test/fakes'
 import { laneRow, requests } from './test/rows'
-import { approveAndMergeAction, type PullRequest } from './types'
+import { approveAndMergeAction, type PullRequest, type Requests, type Setup } from './types'
 
 // jsdom has no modal dialogs.
 beforeAll(() => {
@@ -186,4 +186,133 @@ it('picks a model in the settings and signs out', async () => {
 
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Sign out' })))
   expect(screen.getByLabelText<HTMLInputElement>('GitHub token').value).toBe('')
+})
+
+const template = 'version: 1\nlanes: {}\n'
+const setupPath = '/api/repos/acme/new/setup'
+
+function withoutRules(setup: Setup): Requests {
+  return { repo: 'acme/new', fetchedAt: '2027-01-15T08:01:00Z', rows: [], lanes: [], setup }
+}
+
+async function emit(sources: ReturnType<typeof fakeEventSources>, data: Requests) {
+  await act(async () => {
+    sources.last().emit('requests', data)
+    await settle()
+  })
+}
+
+it('shows the setup warning instead of the list, closes the detail, and loads no classifications', async () => {
+  const { sources, sent } = await signedIn()
+  await open(2)
+  expect(screen.getByRole('heading', { name: 'PR 2' })).toBeTruthy()
+
+  await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: null }))
+  const warning = screen.getByRole('region', { name: 'Setup' })
+  expect(warning.textContent).toContain(
+    'acme/new has no .github/sheepdog.yml on its default branch main. Sheepdog works only with repositories that have this file.',
+  )
+  expect(within(warning).getByRole('button', { name: 'Create sheepdog.yml' })).toBeTruthy()
+  expect(screen.queryByRole('region', { name: 'safe' })).toBeNull()
+  expect(screen.queryByText('No review requests')).toBeNull()
+  expect(screen.getByRole('main').textContent).toBe('')
+  expect(document.title).toBe('Sheepdog')
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(sent('GET', '/api/repos/acme/new/classifications')).toHaveLength(0)
+  expect(sent('GET', '/api/repos/acme/new/setup/template')).toHaveLength(0)
+
+  await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: { number: 7, url: 'https://github.com/acme/new/pull/7' } }))
+  const waiting = screen.getByRole('region', { name: 'Setup' })
+  expect(waiting.textContent).toContain('Sheepdog waits for the merge of pull request #7, which adds the file.')
+  const link = within(waiting).getByRole('link', { name: 'pull request #7' })
+  expect(link.getAttribute('href')).toBe('https://github.com/acme/new/pull/7')
+  expect(link.getAttribute('target')).toBe('_blank')
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  expect(within(waiting).queryByRole('button')).toBeNull()
+  expect(sent('GET', '/api/repos/acme/new/classifications')).toHaveLength(0)
+})
+
+it('opens the setup pull request only after the click, once for a double click, and shows its link', async () => {
+  const gate = new Gate()
+  const { sources, sent } = await signedIn((seen) => {
+    if (seen.path === `${setupPath}/template`) return reply(200, { content: template })
+    if (seen.path === setupPath) return gate.wait().then(() => reply(201, { number: 12, url: 'https://github.com/acme/new/pull/12' }))
+  })
+  await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: null }))
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Create sheepdog.yml' }))
+    await settle()
+  })
+  let dialog = screen.getByRole('dialog', { name: 'Create sheepdog.yml' })
+  expect(within(dialog).getByLabelText<HTMLTextAreaElement>('sheepdog.yml').value).toBe(template)
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(sent('POST', setupPath)).toHaveLength(0)
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Create sheepdog.yml' }))
+    await settle()
+  })
+  dialog = screen.getByRole('dialog', { name: 'Create sheepdog.yml' })
+  fireEvent.change(within(dialog).getByLabelText('sheepdog.yml'), { target: { value: `${template}# edited\n` } })
+  expect(sent('POST', setupPath)).toHaveLength(0)
+  const openButton = within(dialog).getByRole('button', { name: 'Open pull request' })
+  await act(async () => {
+    fireEvent.click(openButton)
+    fireEvent.click(openButton)
+    await settle()
+  })
+  expect(sent('GET', `${setupPath}/template`)).toHaveLength(2)
+  expect(sent('POST', setupPath).map((seen) => seen.body)).toEqual([{ content: `${template}# edited\n` }])
+  expect(within(dialog).getByRole('button', { name: /Opening/ }).hasAttribute('disabled')).toBe(true)
+
+  await act(async () => {
+    gate.open()
+    await settle()
+  })
+  const link = within(dialog).getByRole('link', { name: 'pull request #12' })
+  expect(link.getAttribute('href')).toBe('https://github.com/acme/new/pull/12')
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  expect(sent('POST', setupPath)).toHaveLength(1)
+
+  await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: { number: 12, url: 'https://github.com/acme/new/pull/12' } }))
+  expect(screen.getByRole('region', { name: 'Setup' }).textContent).toContain('Sheepdog waits for the merge of pull request #12')
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
+  expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+it('shows the errors of the server in the setup dialog', async () => {
+  const branchExists = 'The branch sheepdog/setup already exists. Its pull request is https://github.com/acme/new/pull/3'
+  let templateFails = true
+  const { sources, sent } = await signedIn((seen) => {
+    if (seen.path === `${setupPath}/template`) return templateFails ? failure(502, 'GitHub: Bad credentials') : reply(200, { content: template })
+    if (seen.path === setupPath) return failure(409, branchExists)
+  })
+  await emit(sources, withoutRules({ defaultBranch: 'main', pullRequest: null }))
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Create sheepdog.yml' }))
+    await settle()
+  })
+  let dialog = screen.getByRole('dialog', { name: 'Create sheepdog.yml' })
+  expect(within(dialog).getByText('GitHub: Bad credentials')).toBeTruthy()
+  expect(within(dialog).getByRole('button', { name: 'Open pull request' }).hasAttribute('disabled')).toBe(true)
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+  templateFails = false
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Create sheepdog.yml' }))
+    await settle()
+  })
+  dialog = screen.getByRole('dialog', { name: 'Create sheepdog.yml' })
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open pull request' }))
+    await settle()
+  })
+  expect(within(dialog).getByText(branchExists)).toBeTruthy()
+  expect(within(dialog).getByRole('button', { name: 'Open pull request' }).hasAttribute('disabled')).toBe(false)
+  expect(within(dialog).queryByRole('link')).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(sent('POST', setupPath)).toHaveLength(1)
 })

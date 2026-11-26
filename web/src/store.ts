@@ -3,6 +3,7 @@ import { openEventStream, type EventSourceLike, type StreamDeps } from './events
 import { key, time } from './logic'
 import type {
   Classification,
+  PullLink,
   PullRequest,
   Review,
   Row,
@@ -43,6 +44,8 @@ export interface State {
   startingReviews: ReadonlySet<string>
   startingClassifications: ReadonlySet<string>
   merging: ReadonlySet<string>
+  // Keyed by the repository in lower case.
+  settingUp: ReadonlySet<string>
 }
 
 type Field =
@@ -57,7 +60,7 @@ type Field =
   | 'connectionError'
   | 'error'
 
-type Pending = 'startingReviews' | 'startingClassifications' | 'merging'
+type Pending = 'startingReviews' | 'startingClassifications' | 'merging' | 'settingUp'
 
 export type Action =
   | { type: 'signedIn'; login: string }
@@ -102,6 +105,7 @@ export const initialState: State = {
   startingReviews: new Set(),
   startingClassifications: new Set(),
   merging: new Set(),
+  settingUp: new Set(),
 }
 
 export function currentRepo(state: State): string {
@@ -122,6 +126,10 @@ export function isClassifying(state: State, repo: string, number: number): boole
 
 export function isMerging(state: State, repo: string, number: number): boolean {
   return state.merging.has(key(repo, number))
+}
+
+export function isSettingUp(state: State, repo: string): boolean {
+  return state.settingUp.has(repo.toLowerCase())
 }
 
 function without<T>(record: Record<string, T>, k: string): Record<string, T> {
@@ -229,10 +237,11 @@ function update(state: State, action: Action): State {
   }
 }
 
-// The open PR belongs to one repository, so a change of the repository closes it.
+// The open PR belongs to one repository, so a change of the repository closes it. A repository without rules has no PRs to open.
 export function reducer(state: State, action: Action): State {
   const next = update(state, action)
-  if (next.selection !== null && currentRepo(next).toLowerCase() !== currentRepo(state).toLowerCase()) {
+  const otherRepo = currentRepo(next).toLowerCase() !== currentRepo(state).toLowerCase()
+  if (next.selection !== null && (otherRepo || next.requests?.setup)) {
     return { ...next, selection: null }
   }
   return next
@@ -339,9 +348,11 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
           if (!current()) return
           if (event.type === 'tasks') tasksVersion += 1
           dispatch({ type: 'event', event })
-          if (event.type === 'requests' && event.data.repo && event.data.repo.toLowerCase() !== classificationsRepo) {
-            classificationsRepo = event.data.repo.toLowerCase()
-            void actions.loadClassifications(event.data.repo)
+          // The server refuses the classifications of a repository without rules.
+          const repo = event.type === 'requests' && !event.data.setup ? event.data.repo : ''
+          if (repo && repo.toLowerCase() !== classificationsRepo) {
+            classificationsRepo = repo.toLowerCase()
+            void actions.loadClassifications(repo)
           }
         },
         disconnected(text) {
@@ -532,7 +543,8 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
       } catch (error) {
         if (error instanceof Cancelled) return
         classificationsRepo = null
-        set({ error: message(error) })
+        // A 409 comes for a repository without rules, before the poll shows the setup.
+        if (!(error instanceof ApiError && error.status === 409)) set({ error: message(error) })
       }
     },
 
@@ -560,6 +572,32 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
         }
       }
       if (failures.length > 0) set({ error: ['Approve and merge failed.', ...failures].join('\n') })
+    },
+
+    // null when the result no longer matters. Throws an ApiError that the setup dialog shows.
+    async setupTemplate(repo: string): Promise<string | null> {
+      try {
+        return await checked((client) => client.setupTemplate(repo))
+      } catch (error) {
+        if (error instanceof Cancelled) return null
+        throw error
+      }
+    },
+
+    // Works as setupTemplate does, and also gives null while a setup of the repository runs, so that a second click sends nothing.
+    async setUp(repo: string, content: string): Promise<PullLink | null> {
+      if (isSettingUp(state, repo)) return null
+      const k = repo.toLowerCase()
+      const generation = state.generation
+      dispatch({ type: 'pending', set: 'settingUp', key: k, on: true })
+      try {
+        return await checked((client) => client.setup(repo, content))
+      } catch (error) {
+        if (error instanceof Cancelled) return null
+        throw error
+      } finally {
+        if (generation === state.generation) dispatch({ type: 'pending', set: 'settingUp', key: k, on: false })
+      }
     },
 
     async cancelTask(id: string) {

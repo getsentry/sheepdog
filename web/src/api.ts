@@ -1,6 +1,7 @@
 import type {
   Classification,
   MergeResult,
+  PullLink,
   PullRequest,
   Requests,
   Review,
@@ -101,6 +102,10 @@ export function createApiClient(fetcher: typeof fetch = (input, init) => fetch(i
     // The server checks the lane again, and refuses when the head commit is no longer headSha.
     approveAndMerge: (repo: string, number: number, headSha: string) =>
       json<MergeResult>('POST', `${pull(repo, number)}/approve-and-merge`, { headSha }),
+    setupTemplate: async (repo: string) =>
+      (await json<{ content: string }>('GET', `/api/repos/${repo}/setup/template`)).content,
+    // Opens a PR that adds .github/sheepdog.yml with this content.
+    setup: (repo: string, content: string) => json<PullLink>('POST', `/api/repos/${repo}/setup`, { content }),
     tasks: () => json<RunningTask[]>('GET', '/api/tasks'),
     cancelTask: async (id: string) => void (await send('DELETE', `/api/tasks/${encodeURIComponent(id)}`)),
     // EventSource does not show the status of a refused stream, so this request reads it and closes the stream at once.

@@ -62,6 +62,19 @@ export interface Requests {
   lanes: string[]
   rulesError?: string
   error?: string
+  // Set only when the default branch has no .github/sheepdog.yml. Then rows and lanes are empty.
+  setup?: Setup
+}
+
+export interface PullLink {
+  number: number
+  url: string
+}
+
+export interface Setup {
+  defaultBranch: string
+  // The open PR from the branch sheepdog/setup to the default branch.
+  pullRequest: PullLink | null
 }
 
 export interface Checks {

@@ -111,6 +111,24 @@ describe('API client', () => {
     expect(server.seen[0].body).toEqual({ headSha: 'aaa111' })
   })
 
+  it('loads the setup template and opens the setup pull request', async () => {
+    const server = fakeFetch(({ method, path }) => {
+      if (method === 'GET' && path === '/api/repos/acme/app/setup/template') return reply(200, { content: 'version: 1\n' })
+      if (method === 'POST' && path === '/api/repos/acme/app/setup') return reply(201, { number: 12, url: 'https://github.com/acme/app/pull/12' })
+      return failure(400, '.github/sheepdog.yml is not valid: version must be 1')
+    })
+    const client = createApiClient(server.fetch)
+    expect(await client.setupTemplate('acme/app')).toBe('version: 1\n')
+    expect(await client.setup('acme/app', 'version: 1\n')).toEqual({ number: 12, url: 'https://github.com/acme/app/pull/12' })
+    await expect(client.setup('acme/other', 'version: 2\n')).rejects.toThrow('.github/sheepdog.yml is not valid: version must be 1')
+    expect(server.seen.map((s) => `${s.method} ${s.path}`)).toEqual([
+      'GET /api/repos/acme/app/setup/template',
+      'POST /api/repos/acme/app/setup',
+      'POST /api/repos/acme/other/setup',
+    ])
+    expect(server.seen[1].body).toEqual({ content: 'version: 1\n' })
+  })
+
   it('keeps the server text in errors', async () => {
     const server = fakeFetch(({ method, path }) => {
       if (path === '/api/me') return failure(401, 'The session is not valid. Sign in again')

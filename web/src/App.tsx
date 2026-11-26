@@ -45,7 +45,7 @@ function Main() {
         {row ? (
           <Detail key={key(repo, row.number)} repo={repo} row={row} onApproveAndMerge={setBatch} />
         ) : (
-          <p className="placeholder">Select a pull request</p>
+          !state.requests?.setup && <p className="placeholder">Select a pull request</p>
         )}
       </main>
       {batch && (

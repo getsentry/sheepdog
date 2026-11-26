@@ -6,6 +6,29 @@ import type { Classification, PullRequest, Requests, Review, Row, RunningTask } 
 
 const screenshots = process.env.SHEEPDOG_SCREENSHOTS || join(tmpdir(), 'sheepdog-screenshots')
 const sample = 'getsentry/reviewer-react-native-sample'
+const bare = 'getsentry/sentry-capacitor'
+const template = [
+  '# Rules for Sheepdog. Sheepdog works only with repositories that have this file on the default branch.',
+  'version: 1',
+  '',
+  'classification:',
+  '  model: "anthropic/claude-sonnet-5.5"',
+  '  ci: false',
+  '',
+  'lanes:',
+  '  safe:',
+  '    authors: ["dependabot[bot]"]',
+  '    max_changed_lines: 50',
+  '    max_score: 2',
+  '    no_major_bumps: true',
+  '    require_checks: true',
+  '    action: approve-and-automerge',
+  '',
+  'never_automatic:',
+  '  paths: [".github/**"]',
+  '',
+].join('\n')
+const setupPR = { number: 1290, url: `https://github.com/${bare}/pull/1290` }
 const now = Date.now()
 const ago = (minutes: number) => new Date(now - minutes * 60000).toISOString()
 
@@ -125,10 +148,13 @@ function pullRequest(row: Row): PullRequest {
   }
 }
 
-test('signs in, opens a PR, cancels approve and merge, and opens the settings', async ({ page }) => {
+test('signs in, opens a PR, cancels approve and merge, opens the settings, and sets up a repository', async ({ page }) => {
   let signedIn = false
   let repo = ''
+  let setupOpened = false
+  let setupBody: unknown = null
   const writes: string[] = []
+  const reads: string[] = []
 
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
@@ -136,13 +162,16 @@ test('signs in, opens a PR, cancels approve and merge, and opens the settings', 
   const requests = (): Requests =>
     repo === sample
       ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'] }
-      : { repo, fetchedAt: null, rows: [], lanes: [] }
+      : repo === bare
+        ? { repo, fetchedAt: ago(0.1), rows: [], lanes: [], setup: { defaultBranch: 'main', pullRequest: setupOpened ? setupPR : null } }
+        : { repo, fetchedAt: null, rows: [], lanes: [] }
 
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
     const call = `${request.method()} ${path}`
     if (request.method() !== 'GET') writes.push(call)
+    else reads.push(call)
     if (call === 'POST /api/session') {
       signedIn = true
       return json(route, 200, { login: 'alwx', sessionToken: 'not-a-real-token' })
@@ -158,7 +187,7 @@ test('signs in, opens a PR, cancels approve and merge, and opens the settings', 
         repo = (request.postDataJSON() as { repo?: string }).repo?.toLowerCase() ?? repo
         return json(route, 200, settings())
       case 'GET /api/repos':
-        return json(route, 200, ['getsentry/sentry-cocoa', 'getsentry/sentry-react-native', 'getsentry/reviewer-react-native-sample'])
+        return json(route, 200, ['getsentry/sentry-cocoa', 'getsentry/sentry-react-native', bare, sample])
       case 'GET /api/models':
         return json(route, 200, ['anthropic/claude-sonnet-5.5', 'openai/gpt-6'])
       case 'GET /api/events':
@@ -170,6 +199,14 @@ test('signs in, opens a PR, cancels approve and merge, and opens the settings', 
         })
       case `GET /api/repos/${sample}/classifications`:
         return json(route, 200, [stored])
+      case `GET /api/repos/${bare}/classifications`:
+        return json(route, 409, { error: `${bare} has no .github/sheepdog.yml on main. Set it up first` })
+      case `GET /api/repos/${bare}/setup/template`:
+        return json(route, 200, { content: template })
+      case `POST /api/repos/${bare}/setup`:
+        setupOpened = true
+        setupBody = request.postDataJSON()
+        return json(route, 201, setupPR)
     }
     const row = pull && rows.find((item) => item.number === Number(pull[1]))
     if (row && request.method() === 'GET') {
@@ -219,6 +256,34 @@ test('signs in, opens a PR, cancels approve and merge, and opens the settings', 
   await expect(settingsDialog.getByLabel('OpenRouter API key')).toHaveAttribute('placeholder', 'Saved on the server')
   await expect(settingsDialog.getByRole('button', { name: /anthropic\/claude-sonnet-5.5/ })).toBeEnabled()
   await page.screenshot({ path: join(screenshots, '4-settings.png') })
+  await page.keyboard.press('Escape')
+  await expect(settingsDialog).toBeHidden()
 
-  expect(writes).toEqual(['POST /api/session', 'PUT /api/settings'])
+  await page.getByRole('button', { name: /reviewer-react-native-sample/ }).click()
+  await picker.getByRole('searchbox').fill('capacitor')
+  await picker.getByRole('button', { name: bare }).click()
+  const warning = page.getByRole('region', { name: 'Setup' })
+  await expect(warning).toContainText(`${bare} has no .github/sheepdog.yml on its default branch main.`)
+  await expect(page.getByRole('region', { name: 'safe' })).toBeHidden()
+  await expect(page.getByRole('main')).toHaveText('')
+  await page.screenshot({ path: join(screenshots, '5-setup-warning.png') })
+
+  await warning.getByRole('button', { name: 'Create sheepdog.yml' }).click()
+  const setupDialog = page.getByRole('dialog', { name: 'Create sheepdog.yml' })
+  await expect(setupDialog.getByLabel('sheepdog.yml')).toHaveValue(template)
+  expect(writes).toEqual(['POST /api/session', 'PUT /api/settings', 'PUT /api/settings'])
+  await page.screenshot({ path: join(screenshots, '6-setup-dialog.png') })
+
+  await setupDialog.getByRole('button', { name: 'Open pull request' }).click()
+  await expect(setupDialog.getByRole('link', { name: 'pull request #1290' })).toHaveAttribute('rel', 'noopener noreferrer')
+  // The next stream of the mock sends the result with the setup PR.
+  await expect(warning).toContainText('Sheepdog waits for the merge of pull request #1290', { timeout: 10000 })
+  await expect(warning.getByRole('button', { name: 'Create sheepdog.yml' })).toBeHidden()
+  await setupDialog.getByRole('button', { name: 'Close' }).click()
+  await expect(setupDialog).toBeHidden()
+  await page.screenshot({ path: join(screenshots, '7-setup-waiting.png') })
+
+  expect(writes).toEqual(['POST /api/session', 'PUT /api/settings', 'PUT /api/settings', `POST /api/repos/${bare}/setup`])
+  expect(reads).not.toContain(`GET /api/repos/${bare}/classifications`)
+  expect(setupBody).toEqual({ content: template })
 })
