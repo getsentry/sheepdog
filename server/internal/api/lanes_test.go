@@ -98,10 +98,15 @@ func (f *fakeGitHub) pullNode(id identity, mergeState string) string {
 	return string(node)
 }
 
-func (f *fakeGitHub) serveRules(w http.ResponseWriter, r *http.Request) {
+func (f *fakeGitHub) serveRules(w http.ResponseWriter, r *http.Request, login string) {
 	repo := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/"), "/contents/.github/sheepdog.yml")
+	ref := r.URL.Query().Get("ref")
 	f.mu.Lock()
-	content, ok := f.rules[repo+"@"+r.URL.Query().Get("ref")]
+	if ref == "" {
+		ref = "main"
+		f.defaultReads[login+" "+repo]++
+	}
+	content, ok := f.rules[repo+"@"+ref]
 	f.mu.Unlock()
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
@@ -162,7 +167,9 @@ func (f *fakeGitHub) serveWrite(w http.ResponseWriter, r *http.Request, login st
 		return
 	}
 	f.record(login, r.Method+" "+r.URL.Path+" "+string(body))
-	io.WriteString(w, `{}`)
+	if !f.serveSetupWrite(w, r, body) {
+		io.WriteString(w, `{}`)
+	}
 }
 
 // laneHarness signs in alice with her repository, the lane rules on main, and a poll interval that only pollNow can beat.
@@ -269,13 +276,12 @@ func TestRowsWithoutRulesHaveNoLane(t *testing.T) {
 		t.Errorf("invalid rules %+v", got)
 	}
 
-	h.github.mu.Lock()
-	delete(h.github.rules, aliceRepo+"@main")
-	h.github.mu.Unlock()
+	h.github.setRules(aliceRepo+"@main", laneRules)
+	h.github.setPull(func(p *fakePull) { p.base = "release" })
 	h.repoll(alice, "alice")
 	_, data := h.do("GET", "/api/review-requests", alice, nil)
 	if strings.Contains(string(data), `"lane"`) || strings.Contains(string(data), "rulesError") || !strings.Contains(string(data), `"lanes":[]`) {
-		t.Errorf("no rules file: %s", data)
+		t.Errorf("no rules file on the base branch: %s", data)
 	}
 
 	bob := h.signIn(bobToken)

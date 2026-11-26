@@ -37,7 +37,19 @@ type Lane struct {
 }
 
 // fetchRequests polls the review requests and puts each row in a lane with the rules of its base branch.
+// Without a rules file on the default branch, it returns only the setup state.
 func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user store.User) (Requests, error) {
+	missingOn, err := s.missingRules(ctx, client, user.ID, user.Repo)
+	if err != nil {
+		return Requests{}, err
+	}
+	if missingOn != "" {
+		pr, err := client.OpenPullRequest(ctx, user.Repo, setupBranch, missingOn)
+		if err != nil {
+			return Requests{}, err
+		}
+		return Requests{Rows: []Row{}, Lanes: []string{}, Setup: &Setup{DefaultBranch: missingOn, PullRequest: pr}}, nil
+	}
 	rows, err := client.ReviewRequests(ctx, user.Repo, user.Login)
 	if err != nil {
 		return Requests{}, err
@@ -138,7 +150,7 @@ func (s *Server) listed(userID int64, repo string, number int) bool {
 // approveAndMerge evaluates the lane again with fresh data, because the lane of the list can be up to one poll old.
 func (s *Server) approveAndMerge(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok {
+	if !ok || !s.requireRules(w, r, user, repo) {
 		return
 	}
 	var body struct {

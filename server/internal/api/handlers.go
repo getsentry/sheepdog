@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -228,12 +230,21 @@ func (s *Server) reviewRequests(w http.ResponseWriter, _ *http.Request, user sto
 	writeJSON(w, http.StatusOK, s.requestsFor(user))
 }
 
-// pullPath reads the repository and the PR number from the path, or writes a 400 error.
+// repoPath reads the repository from the path, or writes a 400 error.
 // GitHub names ignore case, so the repository is in lower case for stored reviews and task keys.
-func pullPath(w http.ResponseWriter, r *http.Request) (string, int, bool) {
+func repoPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	repo := strings.ToLower(r.PathValue("owner") + "/" + r.PathValue("name"))
 	if err := github.ValidRepo(repo); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return "", false
+	}
+	return repo, true
+}
+
+// pullPath reads the repository and the PR number from the path, or writes a 400 error.
+func pullPath(w http.ResponseWriter, r *http.Request) (string, int, bool) {
+	repo, ok := repoPath(w, r)
+	if !ok {
 		return "", 0, false
 	}
 	number, err := strconv.Atoi(r.PathValue("number"))
@@ -244,9 +255,65 @@ func pullPath(w http.ResponseWriter, r *http.Request) (string, int, bool) {
 	return repo, number, true
 }
 
+const rulesCheckTTL = 30 * time.Second
+
+type rulesKey struct {
+	userID int64
+	repo   string
+}
+
+type rulesCheck struct {
+	at        time.Time
+	missingOn string
+}
+
+// missingRules returns the default branch when it has no rules file, and "" when it has one. It keeps the answer for requireRules.
+func (s *Server) missingRules(ctx context.Context, client *github.Client, userID int64, repo string) (string, error) {
+	text, err := client.RulesFile(ctx, repo, "")
+	if err != nil {
+		return "", err
+	}
+	missingOn := ""
+	if text == nil {
+		if missingOn, err = client.DefaultBranch(ctx, repo); err != nil {
+			return "", err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for key, check := range s.rulesChecks {
+		if now.Sub(check.at) >= rulesCheckTTL {
+			delete(s.rulesChecks, key)
+		}
+	}
+	s.rulesChecks[rulesKey{userID, repo}] = rulesCheck{at: now, missingOn: missingOn}
+	return missingOn, nil
+}
+
+// requireRules writes 409 when the default branch of the repository has no rules file. It uses an answer of the last 30 seconds.
+func (s *Server) requireRules(w http.ResponseWriter, r *http.Request, user store.User, repo string) bool {
+	s.mu.Lock()
+	check, ok := s.rulesChecks[rulesKey{user.ID, repo}]
+	s.mu.Unlock()
+	missingOn := check.missingOn
+	if !ok || time.Since(check.at) >= rulesCheckTTL {
+		var err error
+		if missingOn, err = s.missingRules(r.Context(), github.New(s.cfg.GitHubURL, user.GitHubToken), user.ID, repo); err != nil {
+			githubError(w, err)
+			return false
+		}
+	}
+	if missingOn != "" {
+		writeError(w, http.StatusConflict, fmt.Sprintf("%s has no %s on %s. Set it up first", repo, github.RulesPath, missingOn))
+		return false
+	}
+	return true
+}
+
 func (s *Server) pullRequest(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok {
+	if !ok || !s.requireRules(w, r, user, repo) {
 		return
 	}
 	detail, err := github.New(s.cfg.GitHubURL, user.GitHubToken).PullRequest(r.Context(), repo, number)
@@ -259,7 +326,7 @@ func (s *Server) pullRequest(w http.ResponseWriter, r *http.Request, user store.
 
 func (s *Server) getReview(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok {
+	if !ok || !s.requireRules(w, r, user, repo) {
 		return
 	}
 	review, err := s.store.LatestReview(r.Context(), user.ID, repo, number)
@@ -276,7 +343,7 @@ func (s *Server) getReview(w http.ResponseWriter, r *http.Request, user store.Us
 
 func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok {
+	if !ok || !s.requireRules(w, r, user, repo) {
 		return
 	}
 	if user.OpenRouterKey == "" || user.Model == "" {
@@ -302,9 +369,8 @@ func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.
 }
 
 func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request, user store.User) {
-	repo := strings.ToLower(r.PathValue("owner") + "/" + r.PathValue("name"))
-	if err := github.ValidRepo(repo); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	repo, ok := repoPath(w, r)
+	if !ok || !s.requireRules(w, r, user, repo) {
 		return
 	}
 	list, err := s.store.LatestClassifications(r.Context(), user.ID, repo)
@@ -317,7 +383,7 @@ func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request, use
 
 func (s *Server) getClassification(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok {
+	if !ok || !s.requireRules(w, r, user, repo) {
 		return
 	}
 	c, err := s.store.LatestClassification(r.Context(), user.ID, repo, number)
@@ -334,7 +400,7 @@ func (s *Server) getClassification(w http.ResponseWriter, r *http.Request, user 
 
 func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok {
+	if !ok || !s.requireRules(w, r, user, repo) {
 		return
 	}
 	if user.OpenRouterKey == "" || user.Model == "" {

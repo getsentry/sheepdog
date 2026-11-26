@@ -74,7 +74,8 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int) (MergePR,
 	}, nil
 }
 
-func (c *Client) write(ctx context.Context, method, path string, body any) error {
+// write sends body as JSON and decodes the response into out when out is not nil.
+func (c *Client) write(ctx context.Context, method, path string, body, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -85,15 +86,18 @@ func (c *Client) write(ctx context.Context, method, path string, body any) error
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
-	_, _, err = c.send(req, maxBodyBytes)
-	return err
+	_, response, err := c.send(req, maxBodyBytes)
+	if err != nil || out == nil {
+		return err
+	}
+	return json.Unmarshal(response, out)
 }
 
 func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
 	if err := ValidRepo(repo); err != nil {
 		return err
 	}
-	return c.write(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/labels", repo, number), map[string]any{"labels": labels})
+	return c.write(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/labels", repo, number), map[string]any{"labels": labels}, nil)
 }
 
 // Approve approves the commit sha, so that an approval never covers a commit that was pushed later.
@@ -101,7 +105,7 @@ func (c *Client) Approve(ctx context.Context, repo string, number int, sha strin
 	if err := ValidRepo(repo); err != nil {
 		return err
 	}
-	return c.write(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/pulls/%d/reviews", repo, number), map[string]string{"commit_id": sha, "event": "APPROVE"})
+	return c.write(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/pulls/%d/reviews", repo, number), map[string]string{"commit_id": sha, "event": "APPROVE"}, nil)
 }
 
 // Merge merges the PR only when its head is still sha.
@@ -109,7 +113,7 @@ func (c *Client) Merge(ctx context.Context, repo string, number int, sha, method
 	if err := ValidRepo(repo); err != nil {
 		return err
 	}
-	return c.write(ctx, http.MethodPut, fmt.Sprintf("/repos/%s/pulls/%d/merge", repo, number), map[string]string{"sha": sha, "merge_method": method})
+	return c.write(ctx, http.MethodPut, fmt.Sprintf("/repos/%s/pulls/%d/merge", repo, number), map[string]string{"sha": sha, "merge_method": method}, nil)
 }
 
 const enableAutoMergeMutation = `

@@ -67,11 +67,18 @@ type fakeGitHub struct {
 	renamed   map[string]string
 	// pull holds the lane facts of the PR in the list of each user.
 	pull fakePull
-	// rules maps "repo@ref" to the content of .github/sheepdog.yml.
-	rules       map[string]string
-	writes      []string
-	mergeReads  int
-	failApprove string
+	// rules maps "repo@ref" to the content of .github/sheepdog.yml. The default branch of every repository is main.
+	rules map[string]string
+	// defaultReads counts the reads of the rules file on the default branch for each "login repo".
+	defaultReads map[string]int
+	// branches maps "repo@branch" to the head commit of the branches other than main.
+	branches map[string]string
+	// setupPulls maps a repository to its open PR from sheepdog/setup.
+	setupPulls    map[string]fakeSetupPull
+	failCreateRef string
+	writes        []string
+	mergeReads    int
+	failApprove   string
 	// ciQueries counts the GraphQL queries that read check suites, and searches keeps the search queries.
 	ciQueries int
 	searches  []string
@@ -128,7 +135,9 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/contents/.github/sheepdog.yml"):
-			f.serveRules(w, r)
+			f.serveRules(w, r, id.login)
+		case strings.Count(r.URL.Path, "/") == 3, strings.Contains(r.URL.Path, "/git/ref/heads/"), strings.HasSuffix(r.URL.Path, "/pulls"):
+			f.serveSetupRead(w, r)
 		case strings.HasSuffix(r.URL.Path, "/contents/AGENTS.md"):
 			fmt.Fprintf(w, "agents of %s at %s", id.login, r.URL.Query().Get("ref"))
 		case strings.Contains(r.URL.Path, "/pulls/"):
@@ -259,7 +268,10 @@ func newHarnessAt(t *testing.T, dbPath, allowed string, setup func(*Server)) *ha
 	t.Helper()
 	gh := &fakeGitHub{
 		stalled: make(chan struct{}, 1), polls: map[string]int{}, repoLists: map[string]int{}, revoked: map[string]bool{}, renamed: map[string]string{},
-		pull: defaultPull(), rules: map[string]string{},
+		pull: defaultPull(), rules: map[string]string{}, defaultReads: map[string]int{}, branches: map[string]string{}, setupPulls: map[string]fakeSetupPull{},
+	}
+	for _, repo := range []string{aliceRepo, bobRepo, "getsentry/sentry-cocoa"} {
+		gh.rules[repo+"@main"] = "version: 1\n"
 	}
 	ghServer := httptest.NewServer(gh)
 	openRouter := &fakeOpenRouter{started: make(chan struct{}, 4), cancelled: make(chan struct{}, 4)}
@@ -573,6 +585,8 @@ func TestRoutesNeedSession(t *testing.T) {
 		{"GET", "/api/repos/getsentry/alice-repo/pulls/1/review"},
 		{"POST", "/api/repos/getsentry/alice-repo/pulls/1/review"},
 		{"POST", "/api/repos/getsentry/alice-repo/pulls/1/approve-and-merge"},
+		{"GET", "/api/repos/getsentry/alice-repo/setup/template"},
+		{"POST", "/api/repos/getsentry/alice-repo/setup"},
 		{"GET", "/api/tasks"},
 		{"DELETE", "/api/tasks/x"},
 		{"GET", "/api/events"},

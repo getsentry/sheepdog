@@ -359,7 +359,8 @@ func (c *Client) AgentsFile(ctx context.Context, repo, ref string) (*string, err
 	return c.file(ctx, repo, "AGENTS.md", ref)
 }
 
-// RulesFile reads .github/sheepdog.yml. Read it from the base branch, so that a PR cannot change its own lane. Nil means no file.
+// RulesFile reads .github/sheepdog.yml. Read it from the base branch, so that a PR cannot change its own lane. An empty ref reads the
+// default branch. Nil means no file.
 func (c *Client) RulesFile(ctx context.Context, repo, ref string) (*string, error) {
 	return c.file(ctx, repo, RulesPath, ref)
 }
@@ -370,7 +371,11 @@ func (c *Client) file(ctx context.Context, repo, path, ref string) (*string, err
 	if err := ValidRepo(repo); err != nil {
 		return nil, err
 	}
-	_, body, err := c.get(ctx, "/repos/"+repo+"/contents/"+path+"?ref="+url.QueryEscape(ref), "application/vnd.github.raw", maxBodyBytes)
+	path = "/repos/" + repo + "/contents/" + path
+	if ref != "" {
+		path += "?ref=" + url.QueryEscape(ref)
+	}
+	_, body, err := c.get(ctx, path, "application/vnd.github.raw", maxBodyBytes)
 	if e, ok := errors.AsType[*Error](err); ok && e.Status == http.StatusNotFound {
 		return nil, nil
 	}

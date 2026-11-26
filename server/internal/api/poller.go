@@ -19,6 +19,14 @@ type Requests struct {
 	Lanes      []string `json:"lanes"`
 	RulesError string   `json:"rulesError,omitempty"`
 	Error      string   `json:"error,omitempty"`
+	// Setup is set when the default branch has no rules file. Then the poll does not search for review requests.
+	Setup *Setup `json:"setup,omitempty"`
+}
+
+// Setup names the default branch without a rules file, and the open setup PR or nil.
+type Setup struct {
+	DefaultBranch string           `json:"defaultBranch"`
+	PullRequest   *github.PullLink `json:"pullRequest"`
 }
 
 func emptyRequests(repo string) Requests {
@@ -138,6 +146,7 @@ func (s *Server) record(userID int64, run *pollRun, polled Requests, err error) 
 		result.Rows = polled.Rows
 		result.Lanes = polled.Lanes
 		result.RulesError = polled.RulesError
+		result.Setup = polled.Setup
 		result.Error = ""
 	}
 	s.requests[userID] = result

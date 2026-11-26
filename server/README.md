@@ -129,7 +129,7 @@ After 10 failed sign-ins in a minute from one client IP address, the server reje
 
 ## Review lanes
 
-A repository can sort its review requests into lanes with the file `.github/sheepdog.yml`. The server reads the file from the base branch of each PR, so a PR cannot change its own lane. A repository without the file gives rows without a lane.
+Sheepdog works only with repositories that have the file `.github/sheepdog.yml` on the default branch. The file sorts the review requests into lanes. The server reads the lanes from the base branch of each PR, so a PR cannot change its own lane. A PR whose base branch has no file gets a row without a lane.
 
 ```yaml
 version: 1
@@ -181,6 +181,29 @@ After a classification is stored, the server checks GitHub again at once, so the
 5. It returns `{"result": "merged"}` or `{"result": "auto-merge"}`, and checks GitHub again at once.
 
 A GitHub error, for example for an approval of your own PR, gives status 502 with the GitHub text.
+
+### Set up a repository
+
+At each poll, the server first reads `.github/sheepdog.yml` from the default branch of the selected repository. If the file is missing, the server does not search for review requests. The `requests` result then has empty `rows` and `lanes`, and `setup`:
+
+```json
+{"defaultBranch": "main", "pullRequest": {"number": 12, "url": "https://github.com/acme/app/pull/12"}}
+```
+
+`pullRequest` is the open PR from the branch `sheepdog/setup` to the default branch, or `null`. After that PR is merged, the next poll shows the review requests. The poll interval stays 30 seconds.
+
+The routes for a PR, its review, its classification, the classifications of the repository, and approve and merge return 409 with the text `<owner/name> has no .github/sheepdog.yml on <branch>. Set it up first` for a repository without the file. The server keeps the result of this check for each user and repository for 30 seconds.
+
+`GET /api/repos/{owner}/{name}/setup/template` returns `{"content"}`, a rules file to start with. It sets `classification.model` to the model of the user, or has a comment instead when the user has no model. Its lane `safe` approves and merges small Dependabot updates without a major version change, with green checks and a score of at most 2.
+
+`POST /api/repos/{owner}/{name}/setup` takes `{"content"}` and opens a PR that adds the file:
+
+1. It returns 400 with the error of the parser if the content is not a valid rules file.
+2. It returns 409 if the default branch already has the file, or if the branch `sheepdog/setup` already exists. The text then has the link of the open PR of that branch. If the branch has no open PR, delete the branch on GitHub and try again.
+3. It creates the branch `sheepdog/setup` from the head of the default branch, commits `.github/sheepdog.yml` with the message `chore: add Sheepdog rules`, and opens the PR `Add Sheepdog rules` with the token of the user.
+4. It returns 201 with `{"number", "url"}` of the PR, and checks GitHub again at once.
+
+The server never commits to the default branch, because rulesets in many repositories require a PR for every change there. The PR needs a review like every other PR of the repository. A GitHub error, for example for a user without write access, gives status 502 with the GitHub text. The server cannot add the workflow `.github/workflows/sheepdog.yml`, because a token needs the scope `workflow` for files in `.github/workflows`. The template explains how to add it.
 
 ## Classification in CI
 
@@ -262,6 +285,8 @@ All requests and responses use JSON. An error response has the form `{"error": "
 
 The browser sends the cookie by itself, so the server protects cookie requests against other sites. The cookie has `HttpOnly`, `SameSite=Strict`, and `Path=/`. A cookie request with a method other than `GET` or `HEAD` gets status 403 unless its `Origin` header is the origin of the server, for example `https://sheepdog.example.com`. A request without an `Origin` header gets 403 too. `POST /api/session` with an `Origin` header of another origin, also `null`, gets status 403. Requests with the `Authorization` header do not need an `Origin` header.
 
+The routes under `/api/repos/{owner}/{name}/pulls/` and `/api/repos/{owner}/{name}/classifications` return 409 for a repository without `.github/sheepdog.yml` on its default branch.
+
 GitHub repository names ignore case. The server changes them to lower case, so settings, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
 
 A review or a classification sends at most 200,000 characters of the diff. The server counts Unicode code points, not bytes and not visible characters. GitHub responses can have at most 50 MB for a diff and 10 MB for other data, and OpenRouter responses at most 10 MB. A larger response gives an error.
@@ -275,7 +300,7 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, and `hasOpenRouterKey`. `PUT` also takes `openRouterKey`. An empty key deletes it. |
 | `GET /api/repos` | The repositories of the user. |
 | `GET /api/models` | The OpenRouter models that support structured outputs. |
-| `GET /api/review-requests` | The result of the last check of the selected repository: `repo`, `fetchedAt`, `rows`, `lanes`, and the optional `error` and `rulesError`. Each row has `headSha`, and a `lane` with `name`, `action`, and `notes` when the repository has a valid rules file. A row with a CI score has `classification` with `source` (always `ci`), `score`, `reason`, `model`, and `headSha`. `lanes` lists the lane names in file order, without `manual`. `rulesError` explains why the rules file is not valid. |
+| `GET /api/review-requests` | The result of the last check of the selected repository: `repo`, `fetchedAt`, `rows`, `lanes`, and the optional `error`, `rulesError`, and `setup`. `setup` is set only when the default branch has no rules file. See [Set up a repository](#set-up-a-repository). Each row has `headSha`, and a `lane` with `name`, `action`, and `notes` when the repository has a valid rules file. A row with a CI score has `classification` with `source` (always `ci`), `score`, `reason`, `model`, and `headSha`. `lanes` lists the lane names in file order, without `manual`. `rulesError` explains why the rules file is not valid. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}` | The details of a PR. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/review` | The latest stored AI review of the PR, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |
@@ -283,6 +308,8 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `GET /api/repos/{owner}/{name}/pulls/{number}/classification` | The latest stored classification of the PR, with a `score` from 1 (no danger, can be merged) to 10 (extreme danger) and a `reason`, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/classification` | Start a classification. Returns the task, or 409 if a classification of the PR is already running. A review and a classification of one PR can run at the same time. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge` | Approve and merge a PR of an `approve-and-automerge` lane. See [Review lanes](#review-lanes). |
+| `GET /api/repos/{owner}/{name}/setup/template` | A rules file to start with. See [Set up a repository](#set-up-a-repository). |
+| `POST /api/repos/{owner}/{name}/setup` | Open a PR that adds the rules file. See [Set up a repository](#set-up-a-repository). |
 | `GET /api/tasks` | The running tasks of the user. |
 | `DELETE /api/tasks/{id}` | Stop a task. |
 | `GET /api/events` | A stream of Server-Sent Events: `requests`, `tasks`, `review`, and `classification`. A new stream of a session ends the older streams of that session. A user can open at most 8 streams at a time. One more stream gets status 429. |

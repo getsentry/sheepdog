@@ -45,6 +45,8 @@ type Server struct {
 	restarts  map[int64]uint64
 	requests  map[int64]Requests
 	repoCache map[int64]cachedRepos
+	// rulesChecks are the answers of missingRules.
+	rulesChecks map[rulesKey]rulesCheck
 }
 
 type cachedRepos struct {
@@ -74,6 +76,7 @@ func New(ctx context.Context, cfg config.Config, db *store.Store) *Server {
 		restarts:       map[int64]uint64{},
 		requests:       map[int64]Requests{},
 		repoCache:      map[int64]cachedRepos{},
+		rulesChecks:    map[rulesKey]rulesCheck{},
 	}
 }
 
@@ -134,6 +137,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.getClassification))
 	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.startClassification))
 	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/approve-and-merge", s.authed(s.approveAndMerge))
+	mux.HandleFunc("GET /api/repos/{owner}/{name}/setup/template", s.authed(s.setupTemplate))
+	mux.HandleFunc("POST /api/repos/{owner}/{name}/setup", s.authed(s.setUp))
 	mux.HandleFunc("GET /api/tasks", s.authed(s.listTasks))
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.authed(s.cancelTask))
 	mux.HandleFunc("GET /api/events", s.authed(s.events))

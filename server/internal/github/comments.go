@@ -47,12 +47,12 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	if err := ValidRepo(repo); err != nil {
 		return err
 	}
-	return c.write(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number), map[string]string{"body": body})
+	return c.write(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number), map[string]string{"body": body}, nil)
 }
 
 func (c *Client) UpdateIssueComment(ctx context.Context, repo string, id int64, body string) error {
 	if err := ValidRepo(repo); err != nil {
 		return err
 	}
-	return c.write(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/issues/comments/%d", repo, id), map[string]string{"body": body})
+	return c.write(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/issues/comments/%d", repo, id), map[string]string{"body": body}, nil)
 }
