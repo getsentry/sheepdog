@@ -51,15 +51,19 @@ func (s *Server) requestsFor(user store.User) Requests {
 }
 
 // pollNow starts the next poll of the user at once and keeps the current list until it ends.
-func (s *Server) pollNow(userID int64) {
+// A signal that waits already covers the next call. It returns false when the user has no running poller.
+func (s *Server) pollNow(userID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if run := s.polls[userID]; run != nil {
-		select {
-		case run.now <- struct{}{}:
-		default:
-		}
+	run := s.polls[userID]
+	if run == nil {
+		return false
 	}
+	select {
+	case run.now <- struct{}{}:
+	default:
+	}
+	return true
 }
 
 // restartPoll stops the poller of the user and starts a new one with the stored token and repository.
@@ -116,11 +120,30 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 		if rejected {
 			return
 		}
+		ticker.Reset(s.pollInterval)
+		if !s.waitPoll(ctx, run, user.ID, ticker.C) {
+			return
+		}
+	}
+}
+
+// waitPoll waits for a poll-now signal, or for a tick while the user has auto refresh on. It returns false when ctx ends.
+// It reads the preference at each tick, so a change needs no signal to the poller.
+func (s *Server) waitPoll(ctx context.Context, run *pollRun, userID int64, tick <-chan time.Time) bool {
+	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-ticker.C:
+			return false
 		case <-run.now:
+			return true
+		case <-tick:
+			on, err := s.store.AutoRefresh(ctx, userID)
+			if err != nil && ctx.Err() == nil {
+				log.Printf("read auto refresh of user %d: %v", userID, err)
+			}
+			if on {
+				return true
+			}
 		}
 	}
 }

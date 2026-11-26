@@ -7,7 +7,7 @@ import { approveAndMergeAction, type Classification, type Review, type RunningTa
 
 const notAllowed = 'This GitHub account is not allowed on this server'
 const badSession = 'The session is not valid. Sign in again'
-const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [] }
+const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: true }
 
 const task: RunningTask = {
   id: 'T1',
@@ -643,6 +643,64 @@ describe('store', () => {
     expect(s.state().settings?.starred).toEqual(['acme/old'])
     expect(s.state().starError).toBe('Internal server error')
     expect(s.state().starring.size).toBe(0)
+  })
+
+  it('shows a refresh until the next requests event, sends one request for a double click, and stops on an error', async () => {
+    let fails = false
+    const s = await signedIn(({ method, path }) =>
+      method === 'POST' && path === '/api/review-requests/refresh'
+        ? fails
+          ? failure(409, 'Select a repository first')
+          : reply(202)
+        : undefined,
+    )
+    s.connect()
+    const first = s.actions.refresh()
+    expect(s.state().refreshing).toBe(true)
+    await s.actions.refresh()
+    await first
+    expect(s.state().refreshing).toBe(true)
+    expect(s.paths('/refresh')).toHaveLength(1)
+    s.sources.last().emit('requests', requests([]))
+    expect(s.state().refreshing).toBe(false)
+
+    fails = true
+    await s.actions.refresh()
+    expect(s.state().refreshing).toBe(false)
+    expect(s.state().refreshError).toBe('Select a repository first')
+    fails = false
+    const again = s.actions.refresh()
+    expect(s.state().refreshError).toBeNull()
+    await again
+    expect(s.paths('/refresh')).toHaveLength(3)
+  })
+
+  it('changes auto refresh at once, and puts it back with the error of the server', async () => {
+    const gate = new Gate()
+    let fails = false
+    const s = await signedIn(async ({ method, path }) => {
+      if (method !== 'PUT' || path !== '/api/settings') return undefined
+      await gate.wait()
+      return fails ? failure(500, 'Internal server error') : reply(200, { ...settings, autoRefresh: false })
+    })
+    await settle()
+    const off = s.actions.setAutoRefresh(false)
+    expect(s.state().settings?.autoRefresh).toBe(false)
+    await s.actions.setAutoRefresh(true)
+    gate.open()
+    await off
+    expect(s.state().settings?.autoRefresh).toBe(false)
+    expect(s.state().savingAutoRefresh).toBe(false)
+
+    fails = true
+    await s.actions.setAutoRefresh(true)
+    expect(s.state().settings?.autoRefresh).toBe(false)
+    expect(s.state().refreshError).toBe('Internal server error')
+    expect(s.state().savingAutoRefresh).toBe(false)
+    expect(s.server.seen.filter((seen) => seen.method === 'PUT').map((seen) => seen.body)).toEqual([
+      { autoRefresh: false },
+      { autoRefresh: true },
+    ])
   })
 
   it('closes the open PR when the repository changes', async () => {

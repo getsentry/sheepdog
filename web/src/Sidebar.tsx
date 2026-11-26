@@ -4,7 +4,7 @@ import { dangerTone, elapsed, relativeTime } from './format'
 import { isOutdated, key, laneSections, shownClassification, starredFirst, type LaneSection } from './logic'
 import { currentRepo, isMerging, isSettingUp, isStarred } from './store'
 import type { PullLink, Row, Setup } from './types'
-import { Capsule, ExternalLink, GearIcon, Modal, SearchList, Spinner, StarIcon, StopIcon, useNow } from './ui'
+import { Capsule, ExternalLink, GearIcon, Modal, RefreshIcon, SearchList, Spinner, StarIcon, StopIcon, useNow } from './ui'
 
 export function Sidebar({
   onApproveAndMerge,
@@ -50,6 +50,7 @@ export function Sidebar({
       </div>
       <footer>
         {state.tasks.length > 0 && <TaskPanel />}
+        {repo !== '' && <RefreshBar />}
         <button type="button" className="borderless" onClick={onOpenSettings}>
           <GearIcon /> Settings
         </button>
@@ -299,11 +300,6 @@ function RequestList({ onApproveAndMerge }: { onApproveAndMerge: (rows: Row[]) =
   return (
     <>
       <Banner />
-      {fetchedAt && (
-        <p className="updated muted">
-          Updated at {new Date(fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
-        </p>
-      )}
       {!fetchedAt && state.error === null && !requests?.error ? (
         <div className="center">
           <Spinner />
@@ -387,6 +383,49 @@ function RowView({
         </span>
       </span>
     </button>
+  )
+}
+
+function RefreshBar() {
+  const state = useAppState()
+  const { actions } = useStore()
+  const fetchedAt = state.requests?.fetchedAt
+  return (
+    <section className="refresh" aria-label="Updates">
+      <div className="refresh-bar">
+        <span className="muted">
+          {fetchedAt
+            ? `Updated at ${new Date(fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}`
+            : 'Not updated yet'}
+        </span>
+        <button
+          type="button"
+          className="borderless icon"
+          title="Refresh"
+          aria-label="Refresh"
+          disabled={state.refreshing}
+          onClick={() => void actions.refresh()}
+        >
+          {state.refreshing ? <Spinner label="Refreshing" /> : <RefreshIcon />}
+        </button>
+        <span className="spacer" />
+        <label className="switch">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={state.settings?.autoRefresh ?? true}
+            disabled={state.settings === null}
+            onChange={(event) => void actions.setAutoRefresh(event.target.checked)}
+          />
+          Auto-refresh
+        </label>
+      </div>
+      {state.refreshError && (
+        <p className="error" role="alert">
+          {state.refreshError}
+        </p>
+      )}
+    </section>
   )
 }
 

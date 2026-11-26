@@ -57,7 +57,7 @@ async function signedIn(handler: (seen: Seen) => ReturnType<Parameters<typeof fa
       case 'GET /api/me':
         return reply(200, { login: 'alwx' })
       case 'GET /api/settings':
-        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [] })
+        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: true })
       case 'GET /api/repos':
         return reply(200, ['acme/app'])
       case 'GET /api/models':
@@ -375,4 +375,80 @@ it('shows a refused star in the picker, and puts it back', async () => {
   expect(within(picker).getByRole('alert').textContent).toBe('You can star at most 200 repositories. Remove a star first')
   expect(within(picker).getAllByRole('button', { name: 'Star' })).toHaveLength(2)
   expect(sent('PUT', '/api/repos/acme/web/star')).toHaveLength(1)
+})
+
+it('shows the update time in the footer, and a spinner on refresh until the next requests event', async () => {
+  const { sources, sent } = await signedIn((seen) => {
+    if (seen.method === 'POST' && seen.path === '/api/review-requests/refresh') return reply(202)
+  })
+  const footer = screen.getByRole('complementary').querySelector('footer')!
+  const updates = within(footer).getByRole('region', { name: 'Updates' })
+  const time = new Date('2027-01-15T08:00:00Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+  expect(updates.textContent).toBe(`Updated at ${time}Auto-refresh`)
+  expect(screen.getAllByText(/Updated at/)).toHaveLength(1)
+  expect(footer.lastElementChild?.textContent).toBe(' Settings')
+  expect(within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' }).checked).toBe(true)
+
+  const refresh = within(updates).getByRole('button', { name: 'Refresh' })
+  await act(async () => {
+    fireEvent.click(refresh)
+    fireEvent.click(refresh)
+    await settle()
+  })
+  expect(refresh.hasAttribute('disabled')).toBe(true)
+  expect(within(refresh).getByRole('status', { name: 'Refreshing' })).toBeTruthy()
+  expect(sent('POST', '/api/review-requests/refresh')).toHaveLength(1)
+
+  await emit(sources, { ...requests(rows, ['safe', 'docs']), fetchedAt: null })
+  expect(refresh.hasAttribute('disabled')).toBe(false)
+  expect(within(refresh).queryByRole('status')).toBeNull()
+  expect(updates.textContent).toBe('Not updated yetAuto-refresh')
+})
+
+it('stops the refresh spinner and shows the error when the refresh fails', async () => {
+  await signedIn((seen) => {
+    if (seen.path === '/api/review-requests/refresh') return failure(409, 'Select a repository first')
+  })
+  const updates = screen.getByRole('region', { name: 'Updates' })
+  await act(async () => {
+    fireEvent.click(within(updates).getByRole('button', { name: 'Refresh' }))
+    await settle()
+  })
+  expect(within(updates).getByRole('alert').textContent).toBe('Select a repository first')
+  expect(within(updates).getByRole('button', { name: 'Refresh' }).hasAttribute('disabled')).toBe(false)
+})
+
+it('turns auto-refresh off at once, and puts it back with an error when the server refuses', async () => {
+  const gate = new Gate()
+  let fails = false
+  const { sent } = await signedIn((seen) => {
+    if (seen.method !== 'PUT' || seen.path !== '/api/settings') return
+    return gate.wait().then(() =>
+      fails
+        ? failure(500, 'Internal server error')
+        : reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoRefresh: false }),
+    )
+  })
+  const updates = screen.getByRole('region', { name: 'Updates' })
+  const toggle = within(updates).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' })
+  await act(async () => {
+    fireEvent.click(toggle)
+    await settle()
+  })
+  expect(toggle.checked).toBe(false)
+  await act(async () => {
+    gate.open()
+    await settle()
+  })
+  expect(toggle.checked).toBe(false)
+  expect(within(updates).queryByRole('alert')).toBeNull()
+
+  fails = true
+  await act(async () => {
+    fireEvent.click(toggle)
+    await settle()
+  })
+  expect(toggle.checked).toBe(false)
+  expect(within(updates).getByRole('alert').textContent).toBe('Internal server error')
+  expect(sent('PUT', '/api/settings').map((seen) => seen.body)).toEqual([{ autoRefresh: false }, { autoRefresh: true }])
 })

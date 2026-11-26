@@ -2,7 +2,7 @@
 
 The Sheepdog server finds the open pull requests (PRs) in one GitHub repository where a review is requested from you or from one of your teams. It also runs AI reviews of PRs and gives PRs a danger score from 1 to 10 with [OpenRouter](https://openrouter.ai). The interface is a web app in `../web`. The server serves it at its own address.
 
-The server serves several users. Each user signs in with an own GitHub token and has an own OpenRouter key, model, repository, reviews, and classifications. The server checks GitHub every 30 seconds for each user who has selected a repository, also when no client is connected. The server keeps its data in one SQLite file. It encrypts the GitHub tokens and the OpenRouter keys in that file.
+The server serves several users. Each user signs in with an own GitHub token and has an own OpenRouter key, model, repository, reviews, and classifications. The server checks GitHub every 30 seconds for each user who has selected a repository, also when no client is connected. A user can turn this auto refresh off and check on demand. The server keeps its data in one SQLite file. It encrypts the GitHub tokens and the OpenRouter keys in that file.
 
 ## Create a GitHub token
 
@@ -289,6 +289,8 @@ The routes under `/api/repos/{owner}/{name}/pulls/` and `/api/repos/{owner}/{nam
 
 The web app shows the starred repositories first in the repository picker. Sheepdog keeps the stars in its own database for each user, not on GitHub, because a star on GitHub is public and has another meaning. A star does not need `.github/sheepdog.yml`.
 
+Auto refresh is on for each user until the user turns it off with `PUT /api/settings` and `{"autoRefresh": false}`. Then the server does not check GitHub every 30 seconds for that user. It still checks at once when the user selects a repository, asks for a refresh, stores a classification, approves and merges a PR, or opens a setup PR. When the user turns auto refresh on again, the server checks at once and then every 30 seconds. The server keeps this preference in the table `user_prefs`. A user without a row there has auto refresh on. The web app has the "Auto-refresh" switch and a refresh button at the bottom of the sidebar.
+
 GitHub repository names ignore case. The server changes them to lower case, so settings, stars, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
 
 A review or a classification sends at most 200,000 characters of the diff. The server counts Unicode code points, not bytes and not visible characters. GitHub responses can have at most 50 MB for a diff and 10 MB for other data, and OpenRouter responses at most 10 MB. A larger response gives an error.
@@ -299,11 +301,12 @@ A review or a classification sends at most 200,000 characters of the diff. The s
 | `DELETE /api/session` | Sign out. Ends this session, closes its event streams, and deletes the session cookie. Returns 204. |
 | `DELETE /api/sessions` | Sign out on all devices. Ends every session of the user, closes all its event streams, and deletes the session cookie. Returns 204. |
 | `GET /api/me` | Returns `{"login"}`. |
-| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, and `starred`. `PUT` takes `repo`, `model`, and `openRouterKey`. An empty key deletes it. `starred` is the list of starred repositories in name order, and an empty list when there is none. |
+| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, `starred`, and `autoRefresh`. `PUT` takes `repo`, `model`, `openRouterKey`, and `autoRefresh`. An empty key deletes it. `starred` is the list of starred repositories in name order, and an empty list when there is none. |
 | `GET /api/repos` | The repositories of the user. |
 | `PUT /api/repos/{owner}/{name}/star`, `DELETE /api/repos/{owner}/{name}/star` | Add or remove a star of the repository. Returns the settings. A second `PUT` or `DELETE` changes nothing. A user can star at most 200 repositories. One more star gets status 409. |
 | `GET /api/models` | The OpenRouter models that support structured outputs. |
 | `GET /api/review-requests` | The result of the last check of the selected repository: `repo`, `fetchedAt`, `rows`, `lanes`, and the optional `error`, `rulesError`, and `setup`. `setup` is set only when the default branch has no rules file. See [Set up a repository](#set-up-a-repository). Each row has `headSha`, and a `lane` with `name`, `action`, and `notes` when the repository has a valid rules file. A row with a CI score has `classification` with `source` (always `ci`), `score`, `reason`, `model`, and `headSha`. `lanes` lists the lane names in file order, without `manual`. `rulesError` explains why the rules file is not valid. |
+| `POST /api/review-requests/refresh` | Check GitHub at once. Returns 202, and the result comes as a `requests` event. More calls during a check lead to only one more check. Returns 409 when no repository is selected, or when the server stopped the checks after GitHub rejected the token. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}` | The details of a PR. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/review` | The latest stored AI review of the PR, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |

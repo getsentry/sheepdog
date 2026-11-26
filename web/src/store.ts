@@ -31,6 +31,11 @@ export interface State {
   starError: string | null
   // The last poll of the server. null until the event stream sends it.
   requests: Requests | null
+  // From a click on refresh until the next requests event.
+  refreshing: boolean
+  savingAutoRefresh: boolean
+  // The last failed refresh or change of auto refresh.
+  refreshError: string | null
   selection: number | null
   // Set while the event stream is down.
   connectionError: string | null
@@ -60,6 +65,9 @@ type Field =
   | 'repositories'
   | 'repositoriesError'
   | 'starError'
+  | 'refreshing'
+  | 'savingAutoRefresh'
+  | 'refreshError'
   | 'selection'
   | 'connectionError'
   | 'error'
@@ -100,6 +108,9 @@ export const initialState: State = {
   repositoriesError: null,
   starError: null,
   requests: null,
+  refreshing: false,
+  savingAutoRefresh: false,
+  refreshError: null,
   selection: null,
   connectionError: null,
   error: null,
@@ -160,7 +171,7 @@ function newer<T extends { createdAt: string }>(value: T, current: T | undefined
 function applyEvent(state: State, event: ServerEvent): State {
   switch (event.type) {
     case 'requests':
-      return { ...state, requests: event.data }
+      return { ...state, requests: event.data, refreshing: false }
     case 'tasks':
       return { ...state, tasks: event.data }
     case 'review': {
@@ -534,6 +545,32 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
         set({ starError: message(error) })
       } finally {
         if (generation === state.generation) dispatch({ type: 'pending', set: 'starring', key: k, on: false })
+      }
+    },
+
+    // A second click before the next requests event sends nothing.
+    async refresh() {
+      if (state.refreshing) return
+      set({ refreshing: true, refreshError: null })
+      try {
+        await checked((client) => client.refresh())
+      } catch (error) {
+        if (!(error instanceof Cancelled)) set({ refreshing: false, refreshError: message(error) })
+      }
+    },
+
+    // The switch changes at once, and goes back when the server refuses.
+    async setAutoRefresh(on: boolean) {
+      if (!state.settings || state.savingAutoRefresh) return
+      const generation = state.generation
+      set({ settings: { ...state.settings, autoRefresh: on }, savingAutoRefresh: true, refreshError: null })
+      try {
+        await checked((client) => client.updateSettings({ autoRefresh: on }))
+      } catch (error) {
+        if (error instanceof Cancelled) return
+        if (state.settings) set({ settings: { ...state.settings, autoRefresh: !on }, refreshError: message(error) })
+      } finally {
+        if (generation === state.generation) set({ savingAutoRefresh: false })
       }
     },
 

@@ -11,6 +11,8 @@ export interface Settings {
   hasOpenRouterKey: boolean
   // The starred repositories in lower case and in name order.
   starred: string[]
+  // Off when the server checks GitHub only on demand, not every 30 seconds.
+  autoRefresh: boolean
 }
 
 // A missing field stays unchanged. An empty openRouterKey deletes the key.
@@ -18,6 +20,7 @@ export interface SettingsUpdate {
   repo?: string
   model?: string
   openRouterKey?: string
+  autoRefresh?: boolean
 }
 
 export const manualLane = 'manual'

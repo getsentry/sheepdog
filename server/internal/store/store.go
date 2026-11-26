@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS starred_repos (
 	repo TEXT NOT NULL,
 	PRIMARY KEY (user_id, repo)
 );
+CREATE TABLE IF NOT EXISTS user_prefs (
+	user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	auto_refresh INTEGER NOT NULL
+);
 `
 
 type Store struct {
@@ -95,6 +99,7 @@ type Settings struct {
 	Repo          *string
 	Model         *string
 	OpenRouterKey *string
+	AutoRefresh   *bool
 }
 
 func Open(path string, key []byte) (*Store, error) {
@@ -212,7 +217,24 @@ func (s *Store) UpdateSettings(ctx context.Context, userID int64, settings Setti
 			return err
 		}
 	}
+	if settings.AutoRefresh != nil {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO user_prefs (user_id, auto_refresh) VALUES (?, ?)
+			ON CONFLICT (user_id) DO UPDATE SET auto_refresh = excluded.auto_refresh`, userID, *settings.AutoRefresh); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// AutoRefresh tells whether the server polls GitHub for the user on a timer. A user without preferences has it on.
+func (s *Store) AutoRefresh(ctx context.Context, userID int64) (bool, error) {
+	var on bool
+	err := s.db.QueryRowContext(ctx, `SELECT auto_refresh FROM user_prefs WHERE user_id = ?`, userID).Scan(&on)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	return on, err
 }
 
 // UserIDsWithRepo returns the users that have a repository selected.

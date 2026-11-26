@@ -93,6 +93,8 @@ export function createApiClient(fetcher: typeof fetch = (input, init) => fetch(i
     unstar: (repo: string) => json<Settings>('DELETE', `/api/repos/${repo}/star`),
     models: () => json<string[]>('GET', '/api/models'),
     reviewRequests: () => json<Requests>('GET', '/api/review-requests'),
+    // The result comes as the next requests event.
+    refresh: async () => void (await send('POST', '/api/review-requests/refresh')),
     // repo is "owner/name".
     pullRequest: (repo: string, number: number) => json<PullRequest>('GET', pull(repo, number)),
     review: (repo: string, number: number) => orNull<Review>(`${pull(repo, number)}/review`),

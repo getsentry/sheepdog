@@ -341,7 +341,7 @@ func TestReusedLoginGetsNewUser(t *testing.T) {
 	h.wantLogin(second, "alice")
 	var settings settingsResponse
 	h.json("GET", "/api/settings", second, nil, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}, AutoRefresh: true}) {
 		t.Errorf("settings of the new user %+v, want none", settings)
 	}
 	h.wantError("GET", "/api/models", second, nil, http.StatusBadRequest, "Set an OpenRouter API key first")
@@ -355,7 +355,7 @@ func TestReusedLoginGetsNewUser(t *testing.T) {
 	h.json("DELETE", "/api/sessions", second, nil, http.StatusNoContent, nil)
 	h.wantLogin(first, "alice")
 	h.json("GET", "/api/settings", first, nil, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "alice/model", HasOpenRouterKey: true, Starred: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "alice/model", HasOpenRouterKey: true, Starred: []string{}, AutoRefresh: true}) {
 		t.Errorf("settings of the first user %+v", settings)
 	}
 	h.json("GET", reviewPath, first, nil, http.StatusOK, nil)

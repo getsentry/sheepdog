@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ApiError, createApiClient } from './api'
 import { failure, fakeFetch, reply } from './test/fakes'
 
-const settings = { repo: 'getsentry/sentry-react-native', model: 'google/gemini-4-hydrogen', hasOpenRouterKey: true, starred: [] }
+const settings = { repo: 'getsentry/sentry-react-native', model: 'google/gemini-4-hydrogen', hasOpenRouterKey: true, starred: [], autoRefresh: true }
 const task = {
   id: 'S6L32X34DAKG7WI2CRMWGRYNTT',
   kind: 'review',
@@ -43,6 +43,8 @@ describe('API client', () => {
           return reply(200, settings)
         case 'GET /api/review-requests':
           return reply(200, { repo: settings.repo, fetchedAt: null, rows: [], lanes: [] })
+        case 'POST /api/review-requests/refresh':
+          return reply(202)
         case 'GET /api/repos/getsentry/sentry-react-native/pulls/6773':
           return reply(200, { changedFiles: 7 })
         case 'GET /api/repos/getsentry/sentry-react-native/pulls/6773/review':
@@ -72,6 +74,7 @@ describe('API client', () => {
     expect((await client.unstar(repo)).starred).toEqual([])
     expect(await client.models()).toEqual(['google/gemini-4-hydrogen'])
     expect((await client.reviewRequests()).rows).toEqual([])
+    await client.refresh()
     expect((await client.pullRequest(repo, 6773)).changedFiles).toBe(7)
     expect((await client.review(repo, 6773))?.risk).toBe('yellow')
     expect((await client.startReview(repo, 6773)).id).toBe(task.id)
@@ -82,7 +85,7 @@ describe('API client', () => {
     await client.signOut()
     await client.signOutEverywhere()
 
-    expect(server.seen).toHaveLength(17)
+    expect(server.seen).toHaveLength(18)
     expect(server.seen.every((s) => s.init.credentials === 'same-origin')).toBe(true)
     expect(server.seen.some((s) => JSON.stringify(s.init.headers ?? {}).includes('Authorization'))).toBe(false)
     expect(server.seen.find((s) => s.method === 'PUT')?.body).toEqual({

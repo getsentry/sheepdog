@@ -637,3 +637,76 @@ func TestOpenAddsStarsToAnOlderDatabase(t *testing.T) {
 		t.Errorf("the user of the older database = %+v, %v", u, err)
 	}
 }
+
+func TestAutoRefreshByUser(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
+	autoRefresh := func(user int64) bool {
+		t.Helper()
+		on, err := s.AutoRefresh(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return on
+	}
+	if !autoRefresh(alice) {
+		t.Error("auto refresh is off without a stored preference")
+	}
+	off, on := false, true
+	if err := s.UpdateSettings(ctx, alice, Settings{AutoRefresh: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if autoRefresh(alice) || !autoRefresh(bob) {
+		t.Errorf("auto refresh of alice %v and bob %v, want off and on", autoRefresh(alice), autoRefresh(bob))
+	}
+	repo := "acme/app"
+	if err := s.UpdateSettings(ctx, alice, Settings{Repo: &repo}); err != nil {
+		t.Fatal(err)
+	}
+	if autoRefresh(alice) {
+		t.Error("a change of the repository turned auto refresh on")
+	}
+	if err := s.UpdateSettings(ctx, alice, Settings{AutoRefresh: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if !autoRefresh(alice) {
+		t.Error("auto refresh stayed off")
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, alice); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prefs`).Scan(&rows); err != nil || rows != 0 {
+		t.Errorf("%d preference rows after the delete of alice, %v", rows, err)
+	}
+}
+
+func TestOpenAddsPreferencesToAnOlderDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	key := newKey(t)
+	ctx := context.Background()
+	s, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	if _, err := s.db.Exec(`DROP TABLE user_prefs`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s = openStore(t, path, key)
+	if on, err := s.AutoRefresh(ctx, alice); err != nil || !on {
+		t.Errorf("auto refresh of the older database = %v, %v", on, err)
+	}
+	off := false
+	if err := s.UpdateSettings(ctx, alice, Settings{AutoRefresh: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := s.AutoRefresh(ctx, alice); err != nil || on {
+		t.Errorf("auto refresh after the change = %v, %v", on, err)
+	}
+}

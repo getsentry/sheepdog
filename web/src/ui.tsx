@@ -134,6 +134,21 @@ export function StarIcon({ filled }: { filled: boolean }) {
   )
 }
 
+export function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4v4.5H15"
+      />
+    </svg>
+  )
+}
+
 export function StopIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">

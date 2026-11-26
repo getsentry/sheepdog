@@ -83,6 +83,8 @@ type fakeGitHub struct {
 	// ciQueries counts the GraphQL queries that read check suites, and searches keeps the search queries.
 	ciQueries int
 	searches  []string
+	// holdSearch, when set, makes each search wait until it is closed.
+	holdSearch chan struct{}
 }
 
 func (f *fakeGitHub) repoListCount(token string) int {
@@ -160,7 +162,11 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.polls[token]++
 		f.searches = append(f.searches, req.Query)
+		hold := f.holdSearch
 		f.mu.Unlock()
+		if hold != nil {
+			<-hold
+		}
 		nodes := ""
 		if q, _ := req.Variables["q"].(string); strings.Contains(q, "repo:getsentry/"+id.login+"-repo ") {
 			nodes = f.pullNode(id, "CLEAN")
@@ -582,6 +588,7 @@ func TestRoutesNeedSession(t *testing.T) {
 		{"GET", "/api/repos"},
 		{"GET", "/api/models"},
 		{"GET", "/api/review-requests"},
+		{"POST", "/api/review-requests/refresh"},
 		{"GET", "/api/repos/getsentry/alice-repo/pulls/1"},
 		{"GET", "/api/repos/getsentry/alice-repo/pulls/1/review"},
 		{"POST", "/api/repos/getsentry/alice-repo/pulls/1/review"},
@@ -617,16 +624,16 @@ func TestUsersSeeOnlyOwnData(t *testing.T) {
 
 	var settings settingsResponse
 	h.json("PUT", "/api/settings", alice, map[string]string{"repo": aliceRepo, "model": "m/alice", "openRouterKey": aliceKey}, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}, AutoRefresh: true}) {
 		t.Errorf("alice settings %+v", settings)
 	}
 	h.json("GET", "/api/settings", bob, nil, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}, AutoRefresh: true}) {
 		t.Errorf("bob settings before PUT %+v", settings)
 	}
 	h.json("PUT", "/api/settings", bob, map[string]string{"repo": bobRepo, "openRouterKey": bobWrongKey}, http.StatusOK, &settings)
 	h.json("GET", "/api/settings", alice, nil, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}, AutoRefresh: true}) {
 		t.Errorf("alice settings after bob PUT %+v", settings)
 	}
 

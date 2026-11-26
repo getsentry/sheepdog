@@ -129,6 +129,7 @@ type settingsResponse struct {
 	Model            string   `json:"model"`
 	HasOpenRouterKey bool     `json:"hasOpenRouterKey"`
 	Starred          []string `json:"starred"`
+	AutoRefresh      bool     `json:"autoRefresh"`
 }
 
 func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -137,7 +138,14 @@ func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user stor
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, settingsResponse{Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred})
+	autoRefresh, err := s.store.AutoRefresh(r.Context(), user.ID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settingsResponse{
+		Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred, AutoRefresh: autoRefresh,
+	})
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -149,6 +157,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 		Repo          *string `json:"repo"`
 		Model         *string `json:"model"`
 		OpenRouterKey *string `json:"openRouterKey"`
+		AutoRefresh   *bool   `json:"autoRefresh"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -167,10 +176,20 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 			return
 		}
 	}
+	turnedOn := false
+	if body.AutoRefresh != nil && *body.AutoRefresh {
+		wasOn, err := s.store.AutoRefresh(r.Context(), user.ID)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		turnedOn = !wasOn
+	}
 	err := s.store.UpdateSettings(r.Context(), user.ID, store.Settings{
 		Repo:          body.Repo,
 		Model:         body.Model,
 		OpenRouterKey: body.OpenRouterKey,
+		AutoRefresh:   body.AutoRefresh,
 	})
 	if err != nil {
 		internalError(w, err)
@@ -181,6 +200,8 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, user store.
 			internalError(w, err)
 			return
 		}
+	} else if turnedOn {
+		s.pollNow(user.ID)
 	}
 	updated, err := s.store.User(r.Context(), user.ID)
 	if err != nil {
@@ -257,6 +278,19 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request, user store.User)
 
 func (s *Server) reviewRequests(w http.ResponseWriter, _ *http.Request, user store.User) {
 	writeJSON(w, http.StatusOK, s.requestsFor(user))
+}
+
+// refresh asks for one poll at once. The result comes as a requests event.
+func (s *Server) refresh(w http.ResponseWriter, _ *http.Request, user store.User) {
+	if user.Repo == "" {
+		writeError(w, http.StatusConflict, "Select a repository first")
+		return
+	}
+	if !s.pollNow(user.ID) {
+		writeError(w, http.StatusConflict, rejectedAgain)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // repoPath reads the repository from the path, or writes a 400 error.

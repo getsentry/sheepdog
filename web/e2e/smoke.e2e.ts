@@ -148,10 +148,14 @@ function pullRequest(row: Row): PullRequest {
   }
 }
 
-test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, and stars one', async ({ page }) => {
+test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, stars one, and refreshes', async ({ page }) => {
   let signedIn = false
   let repo = ''
   let starred: string[] = []
+  let autoRefresh = true
+  // The event streams after a refresh wait until the test checks the spinner.
+  let refreshHeld = Promise.resolve()
+  let releaseRefresh = () => {}
   let setupOpened = false
   let setupBody: unknown = null
   const writes: string[] = []
@@ -159,7 +163,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
 
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred })
+  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred, autoRefresh })
   const requests = (): Requests =>
     repo === sample
       ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'] }
@@ -193,14 +197,21 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
         return json(route, 200, { login: 'alwx' })
       case 'GET /api/settings':
         return json(route, 200, settings())
-      case 'PUT /api/settings':
-        repo = (request.postDataJSON() as { repo?: string }).repo?.toLowerCase() ?? repo
+      case 'PUT /api/settings': {
+        const update = request.postDataJSON() as { repo?: string; autoRefresh?: boolean }
+        repo = update.repo?.toLowerCase() ?? repo
+        autoRefresh = update.autoRefresh ?? autoRefresh
         return json(route, 200, settings())
+      }
+      case 'POST /api/review-requests/refresh':
+        refreshHeld = new Promise((resolve) => (releaseRefresh = resolve))
+        return route.fulfill({ status: 202 })
       case 'GET /api/repos':
         return json(route, 200, ['getsentry/sentry-cocoa', 'getsentry/sentry-react-native', bare, sample])
       case 'GET /api/models':
         return json(route, 200, ['anthropic/claude-sonnet-5.5', 'openai/gpt-6'])
       case 'GET /api/events':
+        await refreshHeld
         // The stream ends after these events, so the app connects again after 2 seconds.
         return route.fulfill({
           status: 200,
@@ -311,4 +322,28 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   expect(starred).toEqual(['getsentry/sentry-react-native'])
   expect(writes.slice(4)).toEqual(['PUT /api/repos/getsentry/sentry-react-native/star'])
   expect(repo).toBe(bare)
+
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: /sentry-capacitor/ }).click()
+  await picker.getByRole('button', { name: sample }).click()
+  await expect(page.getByRole('region', { name: 'safe' })).toBeVisible()
+  const updates = page.locator('.sidebar > footer').getByRole('region', { name: 'Updates' })
+  await expect(updates).toContainText('Updated at')
+  await expect(page.locator('.sidebar-content').getByText('Updated at')).toHaveCount(0)
+  const refresh = updates.getByRole('button', { name: 'Refresh' })
+  await refresh.click()
+  await expect(refresh.getByRole('status', { name: 'Refreshing' })).toBeVisible()
+  await expect(refresh).toBeDisabled()
+  releaseRefresh()
+  await expect(refresh.getByRole('status')).toBeHidden({ timeout: 10000 })
+  await expect(refresh).toBeEnabled()
+
+  const toggle = updates.getByRole('switch', { name: 'Auto-refresh' })
+  await expect(toggle).toBeChecked()
+  await toggle.click()
+  await expect(toggle).not.toBeChecked()
+  await expect.poll(() => autoRefresh).toBe(false)
+  await expect(updates.getByRole('alert')).toHaveCount(0)
+  await page.locator('.sidebar').screenshot({ path: join(screenshots, '9-refresh-footer.png') })
+  expect(writes.slice(5)).toEqual(['PUT /api/settings', 'POST /api/review-requests/refresh', 'PUT /api/settings'])
 })
