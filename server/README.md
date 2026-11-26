@@ -1,6 +1,6 @@
 # Sheepdog server
 
-The Sheepdog server finds the open pull requests (PRs) in one GitHub repository where a review is requested from you or from one of your teams. It also runs AI reviews of PRs and gives PRs a danger score from 1 to 10 with [OpenRouter](https://openrouter.ai). The Mac app in `../mac` is a client of this server.
+The Sheepdog server finds the open pull requests (PRs) in one GitHub repository where a review is requested from you or from one of your teams. It also runs AI reviews of PRs and gives PRs a danger score from 1 to 10 with [OpenRouter](https://openrouter.ai). The interface is a web app in `../web`. The server serves it at its own address.
 
 The server serves several users. Each user signs in with an own GitHub token and has an own OpenRouter key, model, repository, reviews, and classifications. The server checks GitHub every 30 seconds for each user who has selected a repository, also when no client is connected. The server keeps its data in one SQLite file. It encrypts the GitHub tokens and the OpenRouter keys in that file.
 
@@ -13,7 +13,7 @@ Each user signs in with a classic personal access token (PAT). Fine-grained toke
 3. Click "Generate token" and copy the token.
 4. If your organization uses SAML single sign-on (SSO), open [the token list](https://github.com/settings/tokens), click "Configure SSO" next to the token, and click "Authorize" for the organization. Without this step, GitHub does not show the data of that organization. The server then shows an error with the authorization link from GitHub.
 
-The app sends the token to the server once. To stop the access of the server, delete the token on GitHub.
+The web app sends the token to the server once. To stop the access of the server, delete the token on GitHub.
 
 ## Sessions
 
@@ -48,12 +48,20 @@ If a required variable is missing or wrong, the server stops at once with a mess
 
 ## Build and run
 
-You need Go 1.27.1 or later. Run all commands in this directory.
+You need Go 1.27.1 or later, and Node.js 22 or later for the web app. Run these commands in the root of the repository. The first command builds the web app into `server/internal/webui/dist`, and the second command embeds it into the `sheepdog` binary.
+
+```sh
+(cd web && npm ci && npm run build)
+(cd server && go build ./cmd/sheepdog)
+(cd server && SHEEPDOG_SECRET_KEY='<key>' SHEEPDOG_ALLOWED_LOGINS=alice,bob ./sheepdog)
+```
+
+Open the server address in a browser, for example `http://127.0.0.1:8080`, and sign in with your GitHub token.
+
+Run the tests of the server in this directory:
 
 ```sh
 go vet ./... && go test ./...
-go build ./cmd/sheepdog
-SHEEPDOG_SECRET_KEY='<key>' SHEEPDOG_ALLOWED_LOGINS=alice,bob ./sheepdog
 ```
 
 The server has no C dependencies. To build for a Linux server on a Mac:
@@ -76,6 +84,27 @@ Every web response has these headers:
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: no-referrer`
 
+### Develop the web app
+
+Run these commands in `../web`:
+
+```sh
+npm ci
+npm run dev
+```
+
+`npm run dev` starts the Vite development server at `http://localhost:5173`. It reloads the page when you change a file, and it sends every `/api` request to a server at `http://127.0.0.1:8080`. To use a server on another address, set `SHEEPDOG_API_URL`, for example `SHEEPDOG_API_URL=http://127.0.0.1:9090 npm run dev`. The development server keeps the `Host` header of the browser, so the `Origin` check of the server passes.
+
+The checks of the web app:
+
+```sh
+npm run typecheck
+npm test
+npm run e2e
+```
+
+`npm test` runs the unit tests with Vitest. `npm run e2e` builds the web app and runs a Playwright test in Chromium against mocked `/api` routes. It needs no server and no GitHub token, and it saves screenshots in the folder `sheepdog-screenshots` in the temporary folder of the system, or in `SHEEPDOG_SCREENSHOTS`. Run `npx playwright install chromium` once before the first run.
+
 ## TLS
 
 The server itself does not use TLS. GitHub tokens and session tokens go over the network, so never make the plain HTTP port reachable from other computers. Use one of these setups:
@@ -93,8 +122,6 @@ sheepdog.example.com {
 	}
 }
 ```
-
-The Mac app accepts plain `http://` only for `localhost`, `127.0.0.1`, `::1`, and other IP addresses, because macOS blocks plain HTTP to host names. For a host name, for example a Tailscale name, the server address must start with `https://`.
 
 The session cookie has `Secure` only when the request came over HTTPS. The server itself does not use TLS, so it trusts the header `X-Forwarded-Proto: https` from a reverse proxy on the same computer. The server ignores the header on other connections. The reverse proxy must also keep the `Host` header of the browser, because the server compares the `Origin` header with it. Caddy does both by default.
 
@@ -130,14 +157,14 @@ classification:
 - `authors` matches the login of the PR author. Upper and lower case are the same. An entry that ends with `[bot]`, for example `dependabot[bot]`, matches only a GitHub App author with that name, so that a person with the login `dependabot` does not match. An entry without `[bot]` matches any author with that login. In YAML, write an entry with `[bot]` in quotes.
 - `paths` matches when every changed file matches one of the globs. `**` matches any number of directories.
 - `max_changed_lines` is the highest number of added plus deleted lines.
-- `max_score` is the highest classification score. Only a classification of the current head commit counts. The server does not classify by itself. Click "Classify" in the app, or classify in CI. See [Classification in CI](#classification-in-ci).
+- `max_score` is the highest classification score. Only a classification of the current head commit counts. The server does not classify by itself. Click "Classify" in the web app, or classify in CI. See [Classification in CI](#classification-in-ci).
 - `no_major_bumps: true` matches a title like `Bump expo from 57.0.1 to 57.2.0`, where the first number of both versions is the same. A title without this form does not match.
 - `require_checks: true` matches when all checks of the head commit passed. A PR without checks does not match.
 - `action` is `suggest` (the default) or `approve-and-automerge`.
 - `add_labels` are the labels that "approve and merge" adds before it approves.
 - `never_automatic.paths` puts a PR in `manual` when one changed file matches one of the globs. A PR with more than 100 changed files is also in `manual`.
 - `classification` is optional. If you set it, `model` is required.
-- `classification.model` is the OpenRouter model for every classification of the repository. A click on "Classify" in the app uses this model instead of the model of the user, and the stored classification names this model. If the rules file is missing or not valid, the app uses the model of the user.
+- `classification.model` is the OpenRouter model for every classification of the repository. A click on "Classify" in the web app uses this model instead of the model of the user, and the stored classification names this model. If the rules file is missing or not valid, the server uses the model of the user.
 - `classification.ci: true` tells the server to read the score of the Sheepdog workflow for each PR. See [Classification in CI](#classification-in-ci).
 - `classification.comment: true` tells the Sheepdog workflow to post the score as a comment on the PR. The default is `false`. See [Comment on the PR](#comment-on-the-pr).
 

@@ -11,7 +11,11 @@ export default defineConfig(({ mode }) => ({
   },
   server: {
     proxy: {
-      '/api': loadEnv(mode, '.', '').SHEEPDOG_API_URL || 'http://127.0.0.1:8080',
+      // The server compares Origin with Host, so the proxy keeps the Host of the browser.
+      '/api': {
+        target: loadEnv(mode, '.', '').SHEEPDOG_API_URL || 'http://127.0.0.1:8080',
+        changeOrigin: false,
+      },
     },
   },
   test: {
