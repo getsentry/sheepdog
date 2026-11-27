@@ -14,6 +14,7 @@
   --orange: #e07b00;
   --red: #d93025;
   --gray: #8e8e93;
+  --header-height: 52px;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.4;
@@ -287,7 +288,10 @@ a {
 }
 
 .sidebar > header {
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  min-height: var(--header-height);
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -664,6 +668,13 @@ a {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: var(--header-height);
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
   color: var(--muted);
 }
 

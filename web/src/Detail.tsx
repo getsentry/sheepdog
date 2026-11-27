@@ -75,7 +75,7 @@ export function Detail({
   const body = detail ? bodyText(detail.body) : ''
 
   return (
-    <article className="detail-content">
+    <>
       <header className="detail-header">
         <span className="number">#{row.number}</span>
         <span>{row.author}</span>
@@ -126,39 +126,41 @@ export function Detail({
           Open on GitHub
         </ExternalLink>
       </header>
-      <h1>{row.title}</h1>
-      {detail && (
-        <p className="branch muted">
-          {detail.baseRefName} ← {detail.headRefName}
-        </p>
-      )}
-      {error && <p className="error">{error}</p>}
-      {detail ? (
-        <>
-          <Facts row={row} detail={detail} />
-          {classificationError && <p className="error">{classificationError}</p>}
-          {shown && <ClassificationSection shown={shown} prUpdatedAt={row.updatedAt} />}
-          {reviewError && <p className="error">{reviewError}</p>}
-          {review && <ReviewSection review={review} prUpdatedAt={row.updatedAt} />}
-          <hr />
-          {body === '' ? (
-            <p className="muted">No description</p>
-          ) : (
-            <div className="markdown">
-              <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                {body}
-              </Markdown>
+      <article className="detail-content">
+        <h1>{row.title}</h1>
+        {detail && (
+          <p className="branch muted">
+            {detail.baseRefName} ← {detail.headRefName}
+          </p>
+        )}
+        {error && <p className="error">{error}</p>}
+        {detail ? (
+          <>
+            <Facts row={row} detail={detail} />
+            {classificationError && <p className="error">{classificationError}</p>}
+            {shown && <ClassificationSection shown={shown} prUpdatedAt={row.updatedAt} />}
+            {reviewError && <p className="error">{reviewError}</p>}
+            {review && <ReviewSection review={review} prUpdatedAt={row.updatedAt} />}
+            <hr />
+            {body === '' ? (
+              <p className="muted">No description</p>
+            ) : (
+              <div className="markdown">
+                <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {body}
+                </Markdown>
+              </div>
+            )}
+          </>
+        ) : (
+          error === null && (
+            <div className="center">
+              <Spinner />
             </div>
-          )}
-        </>
-      ) : (
-        error === null && (
-          <div className="center">
-            <Spinner />
-          </div>
-        )
-      )}
-    </article>
+          )
+        )}
+      </article>
+    </>
   )
 }
 

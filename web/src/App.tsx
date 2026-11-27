@@ -51,7 +51,10 @@ function Main() {
         {row ? (
           <Detail key={key(repo, row.number)} repo={repo} row={row} onApproveAndMerge={setBatch} />
         ) : (
-          !hasNoRules(state.requests) && <p className="placeholder">Select a pull request</p>
+          <>
+            <header className="detail-header" />
+            {!hasNoRules(state.requests) && <p className="placeholder">Select a pull request</p>}
+          </>
         )}
       </main>
       {batch && (

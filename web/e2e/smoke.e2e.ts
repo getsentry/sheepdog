@@ -291,6 +291,15 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(page.getByText('<img src="x" onerror="alert(1)">')).toBeVisible()
   await expect(page.getByRole('link', { name: 'expo', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
   await page.screenshot({ path: join(screenshots, '2-list-and-detail.png') })
+  // The header of the detail panel lines up with the sidebar header and stays on top while the PR scrolls.
+  const detailHeader = page.locator('.detail-header')
+  expect((await detailHeader.boundingBox())?.height).toBe((await page.locator('.sidebar > header').boundingBox())?.height)
+  await page.setViewportSize({ width: 1440, height: 400 })
+  await page.getByRole('main').evaluate((main) => main.scrollTo(0, main.scrollHeight))
+  expect(await page.getByRole('main').evaluate((main) => main.scrollTop)).toBeGreaterThan(100)
+  expect((await detailHeader.boundingBox())?.y).toBe(0)
+  await expect(detailHeader.getByRole('button', { name: 'Review again' })).toBeVisible()
+  await page.setViewportSize({ width: 1440, height: 900 })
 
   await page.getByRole('button', { name: 'Approve and merge', exact: true }).click()
   const confirmation = page.getByRole('dialog', { name: 'Approve and merge' })
