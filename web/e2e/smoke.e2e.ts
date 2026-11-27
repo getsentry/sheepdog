@@ -299,6 +299,12 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   expect(await page.getByRole('main').evaluate((main) => main.scrollTop)).toBeGreaterThan(100)
   expect((await detailHeader.boundingBox())?.y).toBe(0)
   await expect(detailHeader.getByRole('button', { name: 'Review again' })).toBeVisible()
+  // The page and the scroll areas do not bounce at their ends.
+  expect(
+    await page.evaluate(() =>
+      ['html', 'body', '.detail', '.sidebar-content'].map((selector) => getComputedStyle(document.querySelector(selector)!).overscrollBehavior),
+    ),
+  ).toEqual(['none', 'none', 'none', 'none'])
   await page.setViewportSize({ width: 1440, height: 900 })
 
   await page.getByRole('button', { name: 'Approve and merge', exact: true }).click()
