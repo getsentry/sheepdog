@@ -1086,3 +1086,30 @@ dialog::backdrop {
   padding: 8px 10px;
   border-top: 1px solid var(--border);
 }
+
+.finding-place {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.finding-place:hover:not(:disabled) {
+  background: none;
+}
+
+.finding.flash {
+  animation: flash 1.6s ease-out;
+}
+
+@keyframes flash {
+  from {
+    box-shadow: 0 0 0 3px var(--accent);
+  }
+  to {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}

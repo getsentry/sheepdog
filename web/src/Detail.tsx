@@ -94,6 +94,16 @@ export function Detail({
     }
   }, [actions, repo, row.number, row.updatedAt])
 
+  // The finding that the user jumps to from the review card. at changes with each click, so that a second click on the same finding jumps again.
+  const [target, setTarget] = useState<{ index: number; at: number } | null>(null)
+  // The findings that the diff shows: of a review of the current head commit, in a file of the diff.
+  const shownFindings: ShownFinding[] =
+    review && review.headSha === row.headSha && diff
+      ? review.findings
+          .map((finding, index) => ({ ...finding, index }))
+          .filter((finding) => diff.files.some((file) => samePath(finding.file, file)))
+      : []
+
   const body = detail ? bodyText(detail.body) : ''
 
   return (
@@ -162,7 +172,14 @@ export function Detail({
             {classificationError && <p className="error">{classificationError}</p>}
             {shown && <ClassificationSection shown={shown} prUpdatedAt={row.updatedAt} />}
             {reviewError && <p className="error">{reviewError}</p>}
-            {review && <ReviewSection review={review} prUpdatedAt={row.updatedAt} />}
+            {review && (
+              <ReviewSection
+                review={review}
+                prUpdatedAt={row.updatedAt}
+                inDiff={new Set(shownFindings.map((finding) => finding.index))}
+                onJump={(index) => setTarget({ index, at: Date.now() })}
+              />
+            )}
             <hr />
             {body === '' ? (
               <p className="muted">No description</p>
@@ -177,7 +194,9 @@ export function Detail({
               diff={diff}
               error={diffError}
               url={row.url}
-              findings={review && review.headSha === row.headSha ? review.findings : []}
+              findings={shownFindings}
+              target={target}
+              onArrived={() => setTarget(null)}
             />
           </>
         ) : (
@@ -200,16 +219,27 @@ const statusLabels: Record<DiffFile['status'], string> = { added: 'Added', delet
 const signs = { add: '+', delete: '-', context: ' ', note: '' } as const
 
 // findings are the findings of a review of the current head commit, because the lines of an older commit can differ.
+// A finding with its index in the review, which names its element in the diff.
+type ShownFinding = Finding & { index: number }
+
+type JumpTarget = { index: number; at: number } | null
+
+const findingId = (index: number) => `review-finding-${index}`
+
 function Changes({
   diff,
   error,
   url,
   findings,
+  target,
+  onArrived,
 }: {
   diff: { files: DiffFile[]; truncated: boolean } | null
   error: string | null
   url: string
-  findings: Finding[]
+  findings: ShownFinding[]
+  target: JumpTarget
+  onArrived: () => void
 }) {
   const additions = diff?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0
   const deletions = diff?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0
@@ -242,6 +272,8 @@ function Changes({
           key={`${file.oldPath}\n${file.path}`}
           file={file}
           findings={findings.filter((finding) => samePath(finding.file, file))}
+          target={target}
+          onArrived={onArrived}
         />
       ))}
     </section>
@@ -249,11 +281,40 @@ function Changes({
 }
 
 // A finding shows under its line. A finding about the whole file, or with a line that the diff does not have, shows above the lines.
-function DiffFileView({ file, findings }: { file: DiffFile; findings: Finding[] }) {
+function DiffFileView({
+  file,
+  findings,
+  target,
+  onArrived,
+}: {
+  file: DiffFile
+  findings: ShownFinding[]
+  target: JumpTarget
+  onArrived: () => void
+}) {
   const [open, setOpen] = useState(findings.length > 0 || file.additions + file.deletions <= collapseAbove)
+  const wanted = target !== null && findings.some((finding) => finding.index === target.index)
+
+  // A jump opens a collapsed file first, and scrolls after the lines are in the page.
+  useEffect(() => {
+    if (wanted) setOpen(true)
+  }, [target, wanted])
+  useEffect(() => {
+    if (!wanted || !open) return
+    const element = document.getElementById(findingId(target.index))
+    if (element) {
+      element.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      element.focus({ preventScroll: true })
+      element.classList.remove('flash')
+      void element.offsetWidth
+      element.classList.add('flash')
+    }
+    onArrived()
+  }, [target, wanted, open, onArrived])
+
   const status = file.binary ? 'Binary' : statusLabels[file.status]
-  const atLine = new Map<string, Finding[]>()
-  const aboveLines: Finding[] = []
+  const atLine = new Map<string, ShownFinding[]>()
+  const aboveLines: ShownFinding[] = []
   for (const finding of findings) {
     const place = finding.line === null ? null : findLine(file, finding.side ?? 'new', finding.line)
     if (!place) {
@@ -277,8 +338,8 @@ function DiffFileView({ file, findings }: { file: DiffFile; findings: Finding[] 
       </button>
       {open && aboveLines.length > 0 && (
         <div className="diff-findings">
-          {aboveLines.map((finding, index) => (
-            <FindingView key={index} finding={finding} />
+          {aboveLines.map((finding) => (
+            <FindingView key={finding.index} finding={finding} id={findingId(finding.index)} />
           ))}
         </div>
       )}
@@ -304,10 +365,10 @@ function DiffFileView({ file, findings }: { file: DiffFile; findings: Finding[] 
                             {line.text}
                           </td>
                         </tr>
-                        {atLine.get(`${index}:${number}`)?.map((finding, at) => (
-                          <tr key={at} className="comment">
+                        {atLine.get(`${index}:${number}`)?.map((finding) => (
+                          <tr key={finding.index} className="comment">
                             <td colSpan={3}>
-                              <FindingView finding={finding} inline />
+                              <FindingView finding={finding} id={findingId(finding.index)} inline />
                             </td>
                           </tr>
                         ))}
@@ -405,7 +466,18 @@ function ClassificationSection({ shown, prUpdatedAt }: { shown: ShownClassificat
   )
 }
 
-function ReviewSection({ review, prUpdatedAt }: { review: Review; prUpdatedAt: string }) {
+// inDiff holds the indexes of the findings that the diff shows, and a click on their place jumps there.
+function ReviewSection({
+  review,
+  prUpdatedAt,
+  inDiff,
+  onJump,
+}: {
+  review: Review
+  prUpdatedAt: string
+  inDiff: ReadonlySet<number>
+  onJump: (index: number) => void
+}) {
   return (
     <section className={`card column ${review.risk}`} aria-label="Review">
       <div className="card-header">
@@ -420,26 +492,39 @@ function ReviewSection({ review, prUpdatedAt }: { review: Review; prUpdatedAt: s
       {review.diffTruncated && <p className="note">{truncatedNote}</p>}
       <p className="plain">{review.summary}</p>
       {review.findings.map((finding, index) => (
-        <FindingView key={index} finding={finding} />
+        <FindingView key={index} finding={finding} onJump={inDiff.has(index) ? () => onJump(index) : undefined} />
       ))}
     </section>
   )
 }
 
-// inline is a finding under its line in the diff, which needs no file and line.
-function FindingView({ finding, inline = false }: { finding: Finding; inline?: boolean }) {
+// inline is a finding under its line in the diff, which needs no file and line. onJump makes the place a button to the diff.
+function FindingView({
+  finding,
+  id,
+  inline = false,
+  onJump,
+}: {
+  finding: Finding
+  id?: string
+  inline?: boolean
+  onJump?: () => void
+}) {
+  const place = `${finding.file}${finding.line !== null ? `:${finding.line}` : ''}`
   return (
-    <div className={inline ? `finding inline ${finding.severity}` : 'finding'}>
+    <div id={id} tabIndex={id ? -1 : undefined} className={inline ? `finding inline ${finding.severity}` : 'finding'}>
       <div className="finding-title">
         <Capsule tone={severityTones[finding.severity]}>{humanize(finding.severity)}</Capsule>
         <strong>{finding.title}</strong>
       </div>
-      {!inline && (
-        <code className="muted">
-          {finding.file}
-          {finding.line !== null && `:${finding.line}`}
-        </code>
-      )}
+      {!inline &&
+        (onJump ? (
+          <button type="button" className="finding-place" title="Show in the diff" onClick={onJump}>
+            <code>{place}</code>
+          </button>
+        ) : (
+          <code className="muted">{place}</code>
+        ))}
       <p className="plain">{finding.detail}</p>
     </div>
   )

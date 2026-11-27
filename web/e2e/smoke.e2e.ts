@@ -335,7 +335,11 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(finding).toContainText('Transitive updates')
   await expect(finding.locator('xpath=preceding-sibling::tr[1]')).toContainText('8411')
   await expect(finding.locator('xpath=preceding-sibling::tr[1]')).toContainText('"version": "57.2.0"')
-  await changes.scrollIntoViewIfNeeded()
+  await page.getByRole('main').evaluate((main) => main.scrollTo(0, 0))
+  await expect(finding).not.toBeInViewport()
+  await page.getByRole('region', { name: 'Review' }).getByRole('button', { name: 'package-lock.json:8411' }).click()
+  await expect(finding).toBeInViewport()
+  await expect(finding.locator('.finding')).toBeFocused()
   await page.screenshot({ path: join(screenshots, '15-diff.png') })
   // The header of the detail panel lines up with the sidebar header and stays on top while the PR scrolls.
   const detailHeader = page.locator('.detail-header')

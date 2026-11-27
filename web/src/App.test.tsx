@@ -16,11 +16,17 @@ beforeAll(() => {
     this.removeAttribute('open')
     this.dispatchEvent(new Event('close'))
   }
-  // jsdom has no pointer capture.
+  // jsdom has no pointer capture and does not scroll.
   HTMLElement.prototype.setPointerCapture = () => {}
+  HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+    scrolledTo.push(this)
+  }
 })
 
+const scrolledTo: HTMLElement[] = []
+
 afterEach(() => {
+  scrolledTo.length = 0
   cleanup()
   localStorage.clear()
 })
@@ -804,4 +810,60 @@ it('shows each review finding under its line in the diff, while the review is of
   await open(2)
   expect(within(screen.getByRole('region', { name: 'Changes' })).queryByText('New version')).toBeNull()
   expect(within(screen.getByRole('region', { name: 'Review' })).getByText('New version')).toBeTruthy()
+})
+
+it('jumps from a finding in the review to its place in the diff, and opens a collapsed file', async () => {
+  await signedIn((seen) => {
+    if (seen.path !== '/api/repos/acme/app/pulls/2/review') return
+    return reply(200, {
+      repo: 'acme/app',
+      number: 2,
+      headSha: 'sha2',
+      model: 'm',
+      risk: 'yellow',
+      summary: 'Bumps expo.',
+      findings: [
+        { severity: 'low', file: 'package.json', line: 4, side: 'new', title: 'New version', detail: 'd' },
+        { severity: 'high', file: 'package-lock.json', line: 200, side: 'new', title: 'Lock line', detail: 'd' },
+        { severity: 'low', file: 'README.md', line: 1, side: 'new', title: 'Elsewhere', detail: 'd' },
+      ],
+      diffTruncated: false,
+      prUpdatedAt: '2027-01-15T08:00:00Z',
+      createdAt: '2027-01-15T09:00:00Z',
+    })
+  })
+  await open(2)
+  const card = screen.getByRole('region', { name: 'Review' })
+  expect(within(card).getAllByRole('button', { name: /:/ }).map((button) => button.textContent)).toEqual([
+    'package.json:4',
+    'package-lock.json:200',
+  ])
+  expect(within(card).getByText('README.md:1').closest('button')).toBeNull()
+
+  const lock = within(screen.getByRole('region', { name: 'Changes' })).getByRole('region', { name: 'package-lock.json' })
+  fireEvent.click(within(lock).getByRole('button', { name: /package-lock\.json/ }))
+  expect(within(lock).queryByText('Lock line')).toBeNull()
+
+  await act(async () => {
+    fireEvent.click(within(card).getByRole('button', { name: 'package-lock.json:200' }))
+    await settle()
+  })
+  const target = within(lock).getByText('Lock line').closest<HTMLElement>('.finding')!
+  expect(within(lock).getByRole('button', { name: /package-lock\.json/ }).getAttribute('aria-expanded')).toBe('true')
+  expect(scrolledTo).toEqual([target])
+  expect(document.activeElement).toBe(target)
+  expect(target.classList.contains('flash')).toBe(true)
+  expect(target.closest('tr')?.previousElementSibling?.textContent).toBe('200+line 200')
+
+  await act(async () => {
+    fireEvent.click(within(card).getByRole('button', { name: 'package.json:4' }))
+    await settle()
+  })
+  await act(async () => {
+    fireEvent.click(within(card).getByRole('button', { name: 'package.json:4' }))
+    await settle()
+  })
+  const json = within(screen.getByRole('region', { name: 'Changes' })).getByRole('region', { name: 'package.json' })
+  const newVersion = within(json).getByText('New version').closest('.finding')
+  expect(scrolledTo.slice(1)).toEqual([newVersion, newVersion])
 })
