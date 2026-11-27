@@ -3,6 +3,7 @@ import type {
   MergeResult,
   PullLink,
   Preference,
+  PullDiff,
   PullRequest,
   RepoSettings,
   Requests,
@@ -102,6 +103,7 @@ export function createApiClient(fetcher: typeof fetch = (input, init) => fetch(i
     refresh: async () => void (await send('POST', '/api/review-requests/refresh')),
     // repo is "owner/name".
     pullRequest: (repo: string, number: number) => json<PullRequest>('GET', pull(repo, number)),
+    pullDiff: (repo: string, number: number) => json<PullDiff>('GET', `${pull(repo, number)}/diff`),
     review: (repo: string, number: number) => orNull<Review>(`${pull(repo, number)}/review`),
     startReview: (repo: string, number: number) => json<RunningTask>('POST', `${pull(repo, number)}/review`),
     classifications: (repo: string) => json<Classification[]>('GET', `/api/repos/${repo}/classifications`),

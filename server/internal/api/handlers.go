@@ -474,6 +474,35 @@ func (s *Server) pullRequest(w http.ResponseWriter, r *http.Request, user store.
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// maxShownDiffBytes is the largest diff that a client gets, because a browser cannot show a diff of many MB.
+const maxShownDiffBytes = 2 << 20
+
+func (s *Server) pullDiff(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, number, ok := pullPath(w, r)
+	if !ok || !s.requireRules(w, r, user, repo) {
+		return
+	}
+	diff, err := github.New(s.cfg.GitHubURL, user.GitHubToken).Diff(r.Context(), repo, number)
+	if err != nil {
+		githubError(w, err)
+		return
+	}
+	shown, truncated := cutDiff(diff, maxShownDiffBytes)
+	writeJSON(w, http.StatusOK, map[string]any{"diff": shown, "truncated": truncated})
+}
+
+// cutDiff keeps at most limit bytes of the diff, and ends a cut diff after its last full line.
+func cutDiff(diff string, limit int) (string, bool) {
+	if len(diff) <= limit {
+		return diff, false
+	}
+	cut := diff[:limit]
+	if end := strings.LastIndexByte(cut, '\n'); end >= 0 {
+		cut = cut[:end+1]
+	}
+	return strings.ToValidUTF8(cut, ""), true
+}
+
 func (s *Server) getReview(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
 	if !ok || !s.requireRules(w, r, user, repo) {

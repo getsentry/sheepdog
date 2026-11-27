@@ -123,6 +123,12 @@ export interface PullRequest {
   checks: Checks
 }
 
+// truncated is true when the server cut a diff of more than 2 MB after its last full line.
+export interface PullDiff {
+  diff: string
+  truncated: boolean
+}
+
 export interface Finding {
   severity: 'high' | 'medium' | 'low'
   file: string

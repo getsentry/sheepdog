@@ -956,3 +956,98 @@ dialog::backdrop {
 .setting-value input {
   flex: 1;
 }
+
+/* Diff */
+
+.changes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.changes h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 16px;
+}
+
+.changes h2 .muted {
+  font-size: 13px;
+  font-weight: normal;
+}
+
+.diff-file {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.diff-file-header {
+  width: 100%;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 0;
+  background: var(--bg-sidebar);
+  font-size: 13px;
+}
+
+.diff-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.diff-note {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.diff-lines {
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
+}
+
+.diff-lines table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff-lines td {
+  padding: 0 8px;
+  white-space: pre;
+  vertical-align: top;
+}
+
+.diff-lines .line-number {
+  width: 1%;
+  min-width: 40px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+}
+
+.diff-lines tr.add {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+}
+
+.diff-lines tr.delete {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+
+.diff-lines tr.hunk td {
+  padding: 2px 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--muted);
+}
+
+.diff-lines tr.note .code {
+  color: var(--muted);
+  font-style: italic;
+}

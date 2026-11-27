@@ -3,6 +3,7 @@ import { openEventStream, type EventSourceLike, type StreamDeps } from './events
 import { key, time } from './logic'
 import type {
   Classification,
+  PullDiff,
   PullLink,
   PullRequest,
   RepoSettings,
@@ -636,6 +637,16 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
     async pullRequest(repo: string, number: number): Promise<PullRequest | null> {
       try {
         return await checked((client) => client.pullRequest(repo, number))
+      } catch (error) {
+        if (error instanceof Cancelled) return null
+        throw error
+      }
+    },
+
+    // Works as pullRequest does.
+    async pullDiff(repo: string, number: number): Promise<PullDiff | null> {
+      try {
+        return await checked((client) => client.pullDiff(repo, number))
       } catch (error) {
         if (error instanceof Cancelled) return null
         throw error

@@ -597,6 +597,7 @@ func TestRoutesNeedSession(t *testing.T) {
 		{"GET", "/api/review-requests"},
 		{"POST", "/api/review-requests/refresh"},
 		{"GET", "/api/repos/getsentry/alice-repo/pulls/1"},
+		{"GET", "/api/repos/getsentry/alice-repo/pulls/1/diff"},
 		{"GET", "/api/repos/getsentry/alice-repo/pulls/1/review"},
 		{"POST", "/api/repos/getsentry/alice-repo/pulls/1/review"},
 		{"POST", "/api/repos/getsentry/alice-repo/pulls/1/approve-and-merge"},

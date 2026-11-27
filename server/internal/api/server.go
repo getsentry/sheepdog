@@ -136,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/review-requests", s.authed(s.reviewRequests))
 	mux.HandleFunc("POST /api/review-requests/refresh", s.authed(s.refresh))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}", s.authed(s.pullRequest))
+	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/diff", s.authed(s.pullDiff))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/review", s.authed(s.getReview))
 	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/review", s.authed(s.startReview))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/classifications", s.authed(s.listClassifications))

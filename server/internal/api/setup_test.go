@@ -165,6 +165,7 @@ func TestRoutesRefuseRepositoryWithoutRules(t *testing.T) {
 	h.waitRequests(alice, func(r Requests) bool { return r.FetchedAt != nil })
 	for _, route := range [][2]string{
 		{"GET", "/api/repos/getsentry/no-rules/pulls/101"},
+		{"GET", "/api/repos/getsentry/no-rules/pulls/101/diff"},
 		{"GET", "/api/repos/getsentry/no-rules/pulls/101/review"},
 		{"POST", "/api/repos/getsentry/no-rules/pulls/101/review"},
 		{"GET", "/api/repos/getsentry/no-rules/pulls/101/classification"},

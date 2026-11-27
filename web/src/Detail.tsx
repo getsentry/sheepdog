@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useAppState, useStore } from './context'
+import { parseDiff, type DiffFile } from './diff'
 import { bodyText, checksTone, dangerLabel, dangerTone, humanize, riskLabels, severityTones } from './format'
 import {
   canApproveAndMerge,
@@ -65,6 +66,27 @@ export function Detail({
         setError(null)
       } catch (failure) {
         if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [actions, repo, row.number, row.updatedAt])
+
+  const [diff, setDiff] = useState<{ files: DiffFile[]; truncated: boolean } | null>(null)
+  const [diffError, setDiffError] = useState<string | null>(null)
+
+  // A large diff loads apart from the PR, so that it does not hold back the details.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const fetched = await actions.pullDiff(repo, row.number)
+        if (cancelled || !fetched) return
+        setDiff({ files: parseDiff(fetched.diff), truncated: fetched.truncated })
+        setDiffError(null)
+      } catch (failure) {
+        if (!cancelled) setDiffError(failure instanceof Error ? failure.message : String(failure))
       }
     })()
     return () => {
@@ -151,6 +173,7 @@ export function Detail({
                 </Markdown>
               </div>
             )}
+            <Changes diff={diff} error={diffError} url={row.url} />
           </>
         ) : (
           error === null && (
@@ -161,6 +184,101 @@ export function Detail({
         )}
       </article>
     </>
+  )
+}
+
+// A file with more changed lines starts collapsed, and its lines are not in the page until the user opens it.
+const collapseAbove = 400
+
+const statusLabels: Record<DiffFile['status'], string> = { added: 'Added', deleted: 'Deleted', renamed: 'Renamed', modified: '' }
+
+const signs = { add: '+', delete: '-', context: ' ', note: '' } as const
+
+function Changes({
+  diff,
+  error,
+  url,
+}: {
+  diff: { files: DiffFile[]; truncated: boolean } | null
+  error: string | null
+  url: string
+}) {
+  const additions = diff?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0
+  const deletions = diff?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0
+  return (
+    <section className="changes" aria-label="Changes">
+      <h2>
+        Changes
+        {diff && (
+          <span className="muted number">
+            {diff.files.length === 1 ? '1 file' : `${diff.files.length} files`}{' '}
+            <span className="text-green">+{additions}</span> <span className="text-red">−{deletions}</span>
+          </span>
+        )}
+      </h2>
+      {error && <p className="error">{error}</p>}
+      {diff === null && error === null && (
+        <div className="center">
+          <Spinner label="Loading the diff" />
+        </div>
+      )}
+      {diff?.truncated && (
+        <p className="note">
+          The diff is larger than 2 MB, so Sheepdog shows only its first part.{' '}
+          <ExternalLink href={`${url}/files`}>See all changes on GitHub</ExternalLink>
+        </p>
+      )}
+      {diff?.files.length === 0 && <p className="muted">No changes</p>}
+      {diff?.files.map((file) => (
+        <DiffFileView key={`${file.oldPath}\n${file.path}`} file={file} />
+      ))}
+    </section>
+  )
+}
+
+function DiffFileView({ file }: { file: DiffFile }) {
+  const [open, setOpen] = useState(file.additions + file.deletions <= collapseAbove)
+  const status = file.binary ? 'Binary' : statusLabels[file.status]
+  return (
+    <section className="diff-file" aria-label={file.path}>
+      <button type="button" className="diff-file-header" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span className="diff-path">{file.status === 'renamed' ? `${file.oldPath} → ${file.path}` : file.path}</span>
+        {status && <Capsule tone="gray">{status}</Capsule>}
+        <span className="spacer" />
+        <span className="number">
+          <span className="text-green">+{file.additions}</span> <span className="text-red">−{file.deletions}</span>
+        </span>
+      </button>
+      {open &&
+        (file.hunks.length === 0 ? (
+          <p className="muted diff-note">{file.binary ? 'Binary file' : 'No changed lines'}</p>
+        ) : (
+          <div className="diff-lines">
+            <table>
+              <tbody>
+                {file.hunks.map((hunk, index) => (
+                  <Fragment key={index}>
+                    <tr className="hunk">
+                      <td colSpan={3}>{hunk.header}</td>
+                    </tr>
+                    {hunk.lines.map((line, number) => (
+                      <tr key={number} className={line.kind}>
+                        <td className="line-number">{line.oldNumber}</td>
+                        <td className="line-number">{line.newNumber}</td>
+                        <td className="code">
+                          {signs[line.kind]}
+                          {line.text}
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+    </section>
   )
 }
 

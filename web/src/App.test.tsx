@@ -41,6 +41,24 @@ const pullRequest: PullRequest = {
   checks: { passed: 3, failed: 1, pending: 0, skipped: 0 },
 }
 
+const bigFile = Array.from({ length: 401 }, (_, index) => `+line ${index + 1}`)
+const prDiff = [
+  'diff --git a/package.json b/package.json',
+  '--- a/package.json',
+  '+++ b/package.json',
+  '@@ -3,3 +3,3 @@',
+  '   "name": "app",',
+  '-  "expo": "57.0.1"',
+  '+  "expo": "57.2.0"',
+  ' }',
+  'diff --git a/package-lock.json b/package-lock.json',
+  '--- a/package-lock.json',
+  '+++ b/package-lock.json',
+  '@@ -0,0 +1,401 @@',
+  ...bigFile,
+  '',
+].join('\n')
+
 const rows = [
   laneRow(2, 'safe', approveAndMergeAction, { source: 'ci', score: 1, reason: 'Lockfile only', model: 'm', headSha: 'sha2' }),
   laneRow(3, 'safe', approveAndMergeAction),
@@ -71,6 +89,8 @@ async function signedIn(handler: (seen: Seen) => ReturnType<Parameters<typeof fa
         return reply(200, [])
       case 'GET /api/repos/acme/app/pulls/2':
         return reply(200, pullRequest)
+      case 'GET /api/repos/acme/app/pulls/2/diff':
+        return reply(200, { diff: prDiff, truncated: false })
       case 'POST /api/repos/acme/app/pulls/2/approve-and-merge':
         return reply(200, { result: 'merged' })
       case 'POST /api/repos/acme/app/pulls/2/classification':
@@ -677,4 +697,54 @@ it('marks the repositories with auto-classify in the picker, and shows them afte
   })
   fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
   expect(await list()).toEqual(['Acme/Tools auto', 'acme/app auto', 'acme/web auto', 'acme/docs'])
+})
+
+it('shows the diff of the PR below the description, with large files collapsed', async () => {
+  await signedIn()
+  await open(2)
+  const changes = screen.getByRole('region', { name: 'Changes' })
+  expect(within(changes).getByRole('heading').textContent).toBe('Changes2 files +402 −1')
+  const json = within(changes).getByRole('region', { name: 'package.json' })
+  const header = within(json).getByRole('button', { name: /package\.json/ })
+  expect(header.getAttribute('aria-expanded')).toBe('true')
+  expect(within(json).getAllByRole('row').map((row) => [...row.querySelectorAll('td')].map((cell) => cell.textContent))).toEqual([
+    ['@@ -3,3 +3,3 @@'],
+    ['3', '3', '   "name": "app",'],
+    ['4', '', '-  "expo": "57.0.1"'],
+    ['', '4', '+  "expo": "57.2.0"'],
+    ['5', '5', ' }'],
+  ])
+  expect(within(json).getAllByRole('row')[2].className).toBe('delete')
+  expect(within(json).getAllByRole('row')[3].className).toBe('add')
+  fireEvent.click(header)
+  expect(within(json).queryByRole('table')).toBeNull()
+
+  const lock = within(changes).getByRole('region', { name: 'package-lock.json' })
+  const lockHeader = within(lock).getByRole('button', { name: /package-lock\.json/ })
+  expect(lockHeader.getAttribute('aria-expanded')).toBe('false')
+  expect(lockHeader.textContent).toContain('+401 −0')
+  expect(within(lock).queryByRole('table')).toBeNull()
+  fireEvent.click(lockHeader)
+  expect(within(lock).getAllByRole('row')).toHaveLength(402)
+  expect(within(changes).queryByText(/larger than 2 MB/)).toBeNull()
+})
+
+it('says when the server cut the diff, and shows a failed diff load', async () => {
+  let fails = false
+  await signedIn((seen) => {
+    if (seen.path === '/api/repos/acme/app/pulls/2/diff') {
+      return fails ? failure(502, 'Sorry, the diff exceeded the maximum number of files') : reply(200, { diff: prDiff, truncated: true })
+    }
+    if (seen.path === '/api/repos/acme/app/pulls/3') return reply(200, { ...pullRequest, title: 'PR 3' })
+  })
+  await open(2)
+  const changes = screen.getByRole('region', { name: 'Changes' })
+  expect(changes.textContent).toContain('The diff is larger than 2 MB, so Sheepdog shows only its first part.')
+  expect(within(changes).getByRole('link', { name: 'See all changes on GitHub' }).getAttribute('href')).toBe(`${rows[0].url}/files`)
+
+  fails = true
+  await open(3)
+  await open(2)
+  expect(within(screen.getByRole('region', { name: 'Changes' })).getByText('Sorry, the diff exceeded the maximum number of files')).toBeTruthy()
+  expect(within(screen.getByRole('region', { name: 'Changes' })).queryByRole('region')).toBeNull()
 })

@@ -112,6 +112,37 @@ const review: Review = {
   createdAt: ago(30),
 }
 
+const expoDiff = [
+  'diff --git a/package.json b/package.json',
+  'index 3f1c2a4..8b0d9e1 100644',
+  '--- a/package.json',
+  '+++ b/package.json',
+  '@@ -12,7 +12,7 @@',
+  '   "dependencies": {',
+  '     "@sentry/react-native": "7.4.0",',
+  '-    "expo": "57.0.1",',
+  '+    "expo": "57.2.0",',
+  '     "react": "19.3.1",',
+  '     "react-native": "0.83.2"',
+  '   },',
+  'diff --git a/package-lock.json b/package-lock.json',
+  'index 0a1b2c3..4d5e6f7 100644',
+  '--- a/package-lock.json',
+  '+++ b/package-lock.json',
+  '@@ -8410,9 +8410,9 @@',
+  '     "node_modules/expo": {',
+  '-      "version": "57.0.1",',
+  '-      "resolved": "https://registry.npmjs.org/expo/-/expo-57.0.1.tgz",',
+  '-      "integrity": "sha512-old",',
+  '+      "version": "57.2.0",',
+  '+      "resolved": "https://registry.npmjs.org/expo/-/expo-57.2.0.tgz",',
+  '+      "integrity": "sha512-new",',
+  '       "license": "MIT",',
+  '       "dependencies": {',
+  '         "@babel/runtime": "^7.20.0",',
+  '',
+].join('\n')
+
 const tasks: RunningTask[] = [
   { id: 'T1', kind: 'review', key: `${sample}#3`, title: 'Review of #3', subtitle: sample, startedAt: ago(1.3) },
 ]
@@ -260,6 +291,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
     if (row && request.method() === 'GET') {
       if (!pull[2]) return json(route, 200, pullRequest(row))
       if (pull[2] === '/review' && row.number === 2) return json(route, 200, review)
+      if (pull[2] === '/diff') return json(route, 200, { diff: row.number === 2 ? expoDiff : '', truncated: false })
       if (pull[2] === '/classification' && row.number === 1) return json(route, 200, stored)
     }
     return json(route, 404, { error: 'Not found' })
@@ -287,10 +319,15 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await safe.getByText('Bump expo from 57.0.1 to 57.2.0').click()
   await expect(page).toHaveTitle('Bump expo from 57.0.1 to 57.2.0')
   await expect(page.getByRole('region', { name: 'Review' })).toContainText('Low risk')
-  await expect(page.getByRole('cell', { name: '57.2.0' })).toBeVisible()
+  await expect(page.locator('.markdown').getByRole('cell', { name: '57.2.0' })).toBeVisible()
   await expect(page.getByText('<img src="x" onerror="alert(1)">')).toBeVisible()
   await expect(page.getByRole('link', { name: 'expo', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
   await page.screenshot({ path: join(screenshots, '2-list-and-detail.png') })
+  const changes = page.getByRole('region', { name: 'Changes' })
+  await expect(changes.getByRole('heading')).toHaveText('Changes2 files +4 −4')
+  await expect(changes.getByRole('region', { name: 'package.json' }).getByRole('row')).toHaveCount(8)
+  await changes.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: join(screenshots, '15-diff.png') })
   // The header of the detail panel lines up with the sidebar header and stays on top while the PR scrolls.
   const detailHeader = page.locator('.detail-header')
   expect((await detailHeader.boundingBox())?.height).toBe((await page.locator('.sidebar > header').boundingBox())?.height)
