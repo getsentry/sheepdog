@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useAppState, useStore } from './context'
-import { Modal, SearchList } from './ui'
+import { notificationsOn, notificationsSupported, setNotifications } from './notifications'
+import { Modal, SearchList, Switch } from './ui'
 
 // Mounted only while open, so the key field never keeps a key.
 export function Settings({ onClose }: { onClose: () => void }) {
@@ -74,6 +75,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
           Classifications and reviews also need this model and the API key.
         </p>
       </div>
+      <NotificationsSetting />
       <GlobalRules />
       {state.settingsError && <p className="error">{state.settingsError}</p>}
       <div className="buttons">
@@ -104,6 +106,43 @@ export function Settings({ onClose }: { onClose: () => void }) {
         </Modal>
       )}
     </Modal>
+  )
+}
+
+function NotificationsSetting() {
+  const supported = notificationsSupported()
+  const [on, setOn] = useState(notificationsOn)
+  const [blocked, setBlocked] = useState(false)
+
+  async function change(next: boolean) {
+    setBlocked(false)
+    const done = await setNotifications(next)
+    setOn(done && next)
+    setBlocked(!done)
+  }
+
+  return (
+    <div className="setting">
+      <span>Notifications</span>
+      <div className="setting-value">
+        <Switch
+          label="Desktop notifications"
+          checked={on}
+          disabled={!supported}
+          onChange={(next) => void change(next)}
+        />
+      </div>
+      <p className="muted setting-help">
+        {supported
+          ? 'Sheepdog shows a notification for a new review request, and when a review or a classification starts by itself or on another device. This browser keeps the choice.'
+          : 'This browser has no desktop notifications.'}
+      </p>
+      {blocked && (
+        <p className="error setting-help">
+          The browser blocks notifications for this site. Allow them in the site settings of the browser.
+        </p>
+      )}
+    </div>
   )
 }
 

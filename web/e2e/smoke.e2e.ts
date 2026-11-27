@@ -182,11 +182,12 @@ function pullRequest(row: Row): PullRequest {
   }
 }
 
-test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, stars one, refreshes, sets global rules, and resizes the sidebar', async ({ page }) => {
+test('signs in, opens a PR, cancels approve and merge, opens the settings, sets up a repository, stars one, refreshes, sets global rules, resizes the sidebar, and notifies', async ({ page }) => {
   let signedIn = false
   let repo = ''
   let starred: string[] = []
   let globalRules = ''
+  const startedTasks: RunningTask[] = []
   // The settings of each repository that the user changed.
   const repoSettings = new Map<string, { autoRefresh: boolean; autoClassify: boolean; autoReview: boolean }>()
   // The event streams after a refresh wait until the test checks the spinner.
@@ -268,14 +269,17 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
         return json(route, 200, ['getsentry/sentry-cocoa', 'getsentry/sentry-react-native', bare, sample])
       case 'GET /api/models':
         return json(route, 200, ['anthropic/claude-sonnet-5.5', 'openai/gpt-6'])
-      case 'GET /api/events':
+      case 'GET /api/events': {
         await refreshHeld
         // The stream ends after these events, so the app connects again after 2 seconds.
-        return route.fulfill({
-          status: 200,
-          contentType: 'text/event-stream',
-          body: `event: tasks\ndata: ${JSON.stringify(tasks)}\n\nevent: requests\ndata: ${JSON.stringify(requests())}\n\n`,
-        })
+        // A task in startedTasks comes in a second tasks event of the same stream, as the server sends a task that starts.
+        let body = `event: tasks\ndata: ${JSON.stringify(tasks)}\n\nevent: requests\ndata: ${JSON.stringify(requests())}\n\n`
+        if (startedTasks.length > 0) {
+          tasks.push(...startedTasks.splice(0))
+          body += `event: tasks\ndata: ${JSON.stringify(tasks)}\n\n`
+        }
+        return route.fulfill({ status: 200, contentType: 'text/event-stream', body })
+      }
       case `GET /api/repos/${sample}/classifications`:
         return json(route, 200, [stored])
       case `GET /api/repos/${sample}/reviews`:
@@ -307,6 +311,24 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
     return json(route, 404, { error: 'Not found' })
   })
 
+  // Chromium shows notifications only with the permission, and the test records each one that the app creates.
+  await page.context().grantPermissions(['notifications'])
+  await page.addInitScript(() => {
+    const recorded: { title: string; body?: string; tag?: string }[] = []
+    Object.assign(window, { recordedNotifications: recorded })
+    const Real = window.Notification
+    window.Notification = class extends Real {
+      // Headless Chromium answers "denied" here also after the permission, while navigator.permissions has "granted".
+      static get permission(): NotificationPermission {
+        return 'granted'
+      }
+
+      constructor(title: string, options?: NotificationOptions) {
+        super(title, options)
+        recorded.push({ title, body: options?.body, tag: options?.tag })
+      }
+    } as typeof Notification
+  })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Sign in to Sheepdog' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Create token on GitHub' })).toHaveAttribute('href', /scopes=repo,read:org/)
@@ -532,4 +554,27 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(page.getByRole('region', { name: 'safe' })).toBeVisible()
   expect((await sidebar.boundingBox())?.width).toBe(640)
   await page.screenshot({ path: join(screenshots, '13-wide-sidebar.png') })
+
+  // With notifications on, a new PR and a review that the server starts each give one desktop notification.
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const notificationSwitch = settingsDialog.getByRole('switch', { name: 'Desktop notifications' })
+  await notificationSwitch.click()
+  await expect(notificationSwitch).toBeChecked()
+  await page.keyboard.press('Escape')
+  rows.push({ ...rows[0], number: 9, title: 'Bump react-native from 0.88.1 to 0.88.2', headSha: 'sha9', updatedAt: ago(0) })
+  startedTasks.push({ id: 'T9', kind: 'review', key: `${bare}#9`, title: 'Review of #9', subtitle: bare, startedAt: ago(0) })
+  type Recorded = { recordedNotifications: { title: string; body: string; tag: string }[] }
+  const recorded = () => page.evaluate(() => (window as unknown as Recorded).recordedNotifications)
+  await expect.poll(recorded, { timeout: 10000 }).toEqual([
+    {
+      title: `New review request in ${bare}`,
+      body: '#9 Bump react-native from 0.88.1 to 0.88.2 by dependabot[bot]',
+      tag: `sheepdog-pr-${bare}#9`,
+    },
+    {
+      title: 'Review started',
+      body: `${bare} #9 Bump react-native from 0.88.1 to 0.88.2`,
+      tag: `sheepdog-review-${bare}#9`,
+    },
+  ])
 })

@@ -3,6 +3,7 @@ import { key } from './logic'
 import { createStore, currentRepo, isClassifying, isMerging, isPostingReview, isReviewing, isSettingUp, isStarred } from './store'
 import { failure, fakeEventSources, fakeFetch, fakeTimers, Gate, reply, settle, type Reply, type Seen } from './test/fakes'
 import { laneRow, requests } from './test/rows'
+import type { DesktopNotification } from './notifications'
 import { approveAndMergeAction, type Classification, type Review, type RunningTask } from './types'
 
 const notAllowed = 'This GitHub account is not allowed on this server'
@@ -68,7 +69,13 @@ async function signedIn(handler: (seen: Seen) => Reply | undefined | Promise<Rep
   })
   const sources = fakeEventSources()
   const timers = fakeTimers()
-  const store = createStore({ fetch: server.fetch, EventSource: sources.EventSource, ...timers })
+  const notifications: DesktopNotification[] = []
+  const store = createStore({
+    fetch: server.fetch,
+    EventSource: sources.EventSource,
+    ...timers,
+    notify: (notification) => notifications.push(notification),
+  })
   await store.actions.start()
   // Opens the current stream with the first events of the server.
   function connect() {
@@ -85,7 +92,7 @@ async function signedIn(handler: (seen: Seen) => Reply | undefined | Promise<Rep
     connect()
   }
   const paths = (suffix: string) => server.seen.filter((s) => s.path.endsWith(suffix))
-  return { store, state: store.getState, actions: store.actions, server, sources, timers, connect, reconnect, paths }
+  return { store, state: store.getState, actions: store.actions, server, sources, timers, connect, reconnect, paths, notifications }
 }
 
 describe('store', () => {
@@ -805,6 +812,65 @@ describe('store', () => {
     await expect(s.actions.postReview('acme/app', 1)).rejects.toThrow('This review is on GitHub already')
     expect(isPostingReview(s.state(), 'acme/app', 1)).toBe(false)
     expect(s.paths('/review/post')).toHaveLength(2)
+  })
+
+  it('notifies about a new PR, but not about the first list, another repository, or a restarted poll', async () => {
+    const s = await signedIn()
+    const polled = (numbers: number[], repo = 'acme/app') => ({
+      ...requests(numbers.map((number) => laneRow(number, null)), [], repo),
+      fetchedAt: '2026-11-16T10:00:00Z',
+    })
+    s.connect()
+    const source = s.sources.last()
+    source.emit('requests', polled([1, 2]))
+    expect(s.notifications).toEqual([])
+    source.emit('requests', polled([1, 2, 3]))
+    source.emit('requests', polled([2, 3]))
+    expect(s.notifications.map((n) => [n.title, n.body, n.tag])).toEqual([
+      ['New review request in acme/app', '#3 PR 3 by dependabot', 'sheepdog-pr-acme/app#3'],
+    ])
+    s.notifications[0].onClick()
+    expect(s.state().selection).toBe(3)
+
+    source.emit('requests', polled([7, 8], 'acme/web'))
+    source.emit('requests', requests([], [], 'acme/web'))
+    source.emit('requests', polled([7, 8, 9], 'acme/web'))
+    expect(s.notifications).toHaveLength(1)
+    source.emit('requests', polled([7, 8, 9, 10], 'acme/web'))
+    expect(s.notifications.map((n) => n.body)).toEqual(['#3 PR 3 by dependabot', '#10 PR 10 by dependabot'])
+  })
+
+  it('notifies about a review or a classification that the server starts, but not about a start of this client', async () => {
+    const own: RunningTask = { ...task, id: 'T2', key: 'acme/app#2', title: 'Review of #2' }
+    const s = await signedIn(({ method, path }) =>
+      method === 'POST' && path === '/api/repos/acme/app/pulls/2/review' ? reply(202, own) : undefined,
+    )
+    s.connect()
+    const source = s.sources.last()
+    source.emit('requests', { ...requests([laneRow(1, null)]), fetchedAt: '2026-11-16T10:00:00Z' })
+    source.emit('tasks', [task])
+    expect(s.notifications.map((n) => [n.title, n.body, n.tag])).toEqual([['Review started', 'acme/app #1 PR 1', 'sheepdog-review-acme/app#1']])
+    s.notifications[0].onClick()
+    expect(s.state().selection).toBe(1)
+
+    await s.actions.startReview('acme/app', 2)
+    source.emit('tasks', [task, own])
+    const classify: RunningTask = { ...task, id: 'T3', kind: 'classify', key: 'acme/other#5', subtitle: 'acme/other', title: 'Classification of #5' }
+    source.emit('tasks', [task, own, classify])
+    expect(s.notifications.map((n) => [n.title, n.body])).toEqual([
+      ['Review started', 'acme/app #1 PR 1'],
+      ['Classification started', 'acme/other #5'],
+    ])
+    s.notifications[1].onClick()
+    expect(s.state().selection).toBe(1)
+
+    // A new stream starts with the full list of running tasks.
+    s.sources.last().fail()
+    await settle()
+    s.timers.fire()
+    s.sources.last().open()
+    s.sources.last().emit('tasks', [task, own, classify])
+    expect(s.notifications).toHaveLength(2)
   })
 
   it('closes the open PR when the repository changes', async () => {

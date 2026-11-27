@@ -1,9 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, beforeAll, expect, it } from 'vitest'
+import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { StoreProvider } from './context'
 import { createStore } from './store'
 import { failure, fakeEventSources, fakeFetch, Gate, reply, settle, type Seen } from './test/fakes'
+import { FakeNotification } from './test/notification'
 import { laneRow, requests } from './test/rows'
 import { approveAndMergeAction, type PullRequest, type Requests, type Setup } from './types'
 
@@ -1044,4 +1045,43 @@ it('posts the review to GitHub after a confirmation, once, and then links it', a
   await open(3)
   await open(2)
   expect(within(card()).queryByRole('button', { name: 'Post to GitHub' })).toBeNull()
+})
+
+it('turns desktop notifications on in the settings, and says when the browser blocks them', async () => {
+  vi.stubGlobal('Notification', FakeNotification)
+  try {
+    await signedIn()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Settings' })))
+    const dialog = screen.getByRole('dialog', { name: 'Settings' })
+    const toggle = within(dialog).getByRole<HTMLInputElement>('switch', { name: 'Desktop notifications' })
+    expect([toggle.checked, toggle.disabled]).toEqual([false, false])
+
+    FakeNotification.answer = 'denied'
+    await act(async () => {
+      fireEvent.click(toggle)
+      await settle()
+    })
+    expect(toggle.checked).toBe(false)
+    expect(within(dialog).getByText(/The browser blocks notifications for this site/)).toBeTruthy()
+
+    FakeNotification.answer = 'granted'
+    await act(async () => {
+      fireEvent.click(toggle)
+      await settle()
+    })
+    expect(toggle.checked).toBe(true)
+    expect(within(dialog).queryByText(/blocks notifications/)).toBeNull()
+    expect(localStorage.getItem('sheepdog.notifications')).toBe('on')
+  } finally {
+    vi.unstubAllGlobals()
+    FakeNotification.reset()
+  }
+})
+
+it('disables the notification switch in a browser without notifications', async () => {
+  await signedIn()
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Settings' })))
+  const dialog = screen.getByRole('dialog', { name: 'Settings' })
+  expect(within(dialog).getByRole<HTMLInputElement>('switch', { name: 'Desktop notifications' }).disabled).toBe(true)
+  expect(within(dialog).getByText('This browser has no desktop notifications.')).toBeTruthy()
 })

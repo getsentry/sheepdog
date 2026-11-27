@@ -1,6 +1,7 @@
 import { ApiError, createApiClient, type ApiClient } from './api'
 import { openEventStream, type EventSourceLike, type StreamDeps } from './events'
 import { key, time } from './logic'
+import { showNotification, type DesktopNotification } from './notifications'
 import type {
   Classification,
   PullDiff,
@@ -327,6 +328,7 @@ export interface StoreDeps {
   EventSource: new (url: string) => EventSourceLike
   setTimeout: StreamDeps['setTimeout']
   clearTimeout: StreamDeps['clearTimeout']
+  notify: (notification: DesktopNotification) => void
 }
 
 // A result that no longer matters: a result of an ended session, or a 401 or 403 that ended the session.
@@ -354,6 +356,12 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
   // The repository of the latest load of repository settings.
   let loadingRepoSettings = ''
   let signingOut: Promise<void> = Promise.resolve()
+  const notify = deps.notify ?? showNotification
+  // The PRs and the tasks that the client knew before the last event, or null when it knows none yet, so that a first list sends no notification.
+  let knownRows: { repo: string; numbers: Set<number> } | null = null
+  let knownTasks: Set<string> | null = null
+  // "kind key" of the tasks that this client started, so that a click sends no notification.
+  const ownStarts = new Set<string>()
 
   const getState = () => state
 
@@ -372,6 +380,8 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
     stream?.close()
     stream = null
     listsRepo = null
+    knownRows = null
+    knownTasks = null
     dispatch({ type: 'signedOut', message: text })
   }
 
@@ -413,6 +423,8 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
           if (!current()) return
           set({ connectionError: null })
           listsRepo = null
+          // The first tasks event of a stream lists all running tasks.
+          knownTasks = null
           if (state.repositoriesError !== null) void actions.loadRepositories()
           // The server does not send again the review and classification events that the client missed while the stream was down.
           const repo = currentRepo(state)
@@ -425,6 +437,8 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
           if (!current()) return
           if (event.type === 'tasks') tasksVersion += 1
           dispatch({ type: 'event', event })
+          if (event.type === 'requests') notifyNewRows(event.data)
+          if (event.type === 'tasks') notifyNewTasks(event.data)
           // The server refuses the reviews and classifications of a repository without rules.
           const repo = event.type === 'requests' && !hasNoRules(event.data) ? event.data.repo : ''
           if (repo && repo.toLowerCase() !== listsRepo) {
@@ -445,9 +459,49 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
   }
 
   function open(login: string) {
+    knownRows = null
+    knownTasks = null
     dispatch({ type: 'signedIn', login })
     void actions.loadSettings()
     startStream()
+  }
+
+  // A poll that restarts sends an empty list without fetchedAt, and a new repository sends all its PRs, so neither sends notifications.
+  function notifyNewRows(data: Requests) {
+    const known = knownRows
+    const repo = data.repo.toLowerCase()
+    knownRows = data.fetchedAt === null ? null : { repo, numbers: new Set(data.rows.map((row) => row.number)) }
+    if (!known || data.fetchedAt === null || known.repo !== repo) return
+    for (const row of data.rows) {
+      if (known.numbers.has(row.number)) continue
+      notify({
+        title: `New review request in ${data.repo}`,
+        body: `#${row.number} ${row.title} by ${row.author}`,
+        tag: `sheepdog-pr-${key(data.repo, row.number)}`,
+        onClick: () => actions.select(row.number),
+      })
+    }
+  }
+
+  function notifyNewTasks(list: RunningTask[]) {
+    const known = knownTasks
+    knownTasks = new Set(list.map((task) => task.id))
+    if (!known) return
+    for (const task of list) {
+      if (known.has(task.id) || ownStarts.delete(`${task.kind} ${task.key.toLowerCase()}`)) continue
+      const repo = task.subtitle
+      const number = Number(task.key.slice(task.key.lastIndexOf('#') + 1))
+      const shown = currentRepo(state).toLowerCase() === repo.toLowerCase()
+      const row = shown ? state.requests?.rows.find((item) => item.number === number) : undefined
+      notify({
+        title: task.kind === 'review' ? 'Review started' : 'Classification started',
+        body: `${repo} #${number}${row ? ` ${row.title}` : ''}`,
+        tag: `sheepdog-${task.kind}-${task.key.toLowerCase()}`,
+        onClick: () => {
+          if (currentRepo(state).toLowerCase() === repo.toLowerCase()) actions.select(number)
+        },
+      })
+    }
   }
 
   async function startTask(
@@ -466,11 +520,14 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
     setError(null)
     dispatch({ type: 'pending', set: pending, key: k, on: true })
     const version = tasksVersion
+    const own = `${kind} ${k}`
+    ownStarts.add(own)
     try {
       const task = await checked(start)
       // A tasks event after the start has the current list, which can be without this task if it already ended.
       if (version === tasksVersion) dispatch({ type: 'taskStarted', task })
     } catch (error) {
+      ownStarts.delete(own)
       if (!(error instanceof Cancelled)) setError(message(error))
     } finally {
       if (generation === state.generation) dispatch({ type: 'pending', set: pending, key: k, on: false })

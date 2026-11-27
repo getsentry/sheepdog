@@ -84,6 +84,8 @@ Every web response has these headers:
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: no-referrer`
 
+The web app can show desktop notifications of the browser. Turn on "Desktop notifications" in Settings, and allow them when the browser asks. The web app then notifies for a new review request in the list, and when a review or a classification starts that the user did not start in this tab, for example an auto review. A click on a notification opens the PR. The browser keeps the choice for the device, and the web app shows notifications only while it is open in a tab.
+
 ### Develop the web app
 
 Run these commands in `../web`:
