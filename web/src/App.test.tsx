@@ -970,3 +970,78 @@ it('says in the repository settings when auto-review misses the key or the model
   expect(within(dialog).getByText('Auto-review needs an OpenRouter API key and a default model in Settings.')).toBeTruthy()
   expect(within(dialog).queryByText(/Auto-classify needs/)).toBeNull()
 })
+
+it('posts the review to GitHub after a confirmation, once, and then links it', async () => {
+  const gate = new Gate()
+  let fails = false
+  let headSha = 'sha2'
+  const stored = {
+    repo: 'acme/app',
+    number: 2,
+    headSha: 'sha2',
+    model: 'm',
+    risk: 'yellow',
+    summary: 's',
+    findings: [],
+    diffTruncated: false,
+    prUpdatedAt: '2027-01-15T08:00:00Z',
+    createdAt: '2027-01-15T09:00:00Z',
+  }
+  const url = 'https://github.com/acme/app/pull/2#pullrequestreview-77'
+  const { sources, sent } = await signedIn((seen) => {
+    if (seen.path === '/api/repos/acme/app/pulls/2/review') return reply(200, { ...stored, headSha })
+    if (seen.path === '/api/repos/acme/app/pulls/2/review/post') {
+      return gate.wait().then(() =>
+        fails ? failure(409, 'Posting a review needs review.comment: true in .github/sheepdog.yml on main') : reply(200, { ...stored, postedUrl: url }),
+      )
+    }
+  })
+  const withPost = (postReviews: boolean) => ({
+    ...requests(
+      rows.map((row) => (row.number === 2 ? { ...row, postReviews } : row)),
+      ['safe', 'docs'],
+    ),
+    fetchedAt: '2027-01-15T08:00:00Z',
+  })
+  await emit(sources, withPost(false))
+  await open(2)
+  const card = () => screen.getByRole('region', { name: 'Review' })
+  expect(within(card()).queryByRole('button', { name: 'Post to GitHub' })).toBeNull()
+
+  await emit(sources, withPost(true))
+  fireEvent.click(within(card()).getByRole('button', { name: 'Post to GitHub' }))
+  let dialog = screen.getByRole('dialog', { name: 'Post the review to GitHub' })
+  expect(dialog.textContent).toContain('Everyone who can see the pull request can read it.')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  expect(sent('POST', '/api/repos/acme/app/pulls/2/review/post')).toHaveLength(0)
+
+  fails = true
+  gate.open()
+  fireEvent.click(within(card()).getByRole('button', { name: 'Post to GitHub' }))
+  await act(async () => {
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Post the review to GitHub' })).getByRole('button', { name: 'Post to GitHub' }))
+    await settle()
+  })
+  expect(within(card()).getByText('Posting a review needs review.comment: true in .github/sheepdog.yml on main')).toBeTruthy()
+  expect(within(card()).getByRole('button', { name: 'Post to GitHub' })).toBeTruthy()
+
+  fails = false
+  fireEvent.click(within(card()).getByRole('button', { name: 'Post to GitHub' }))
+  dialog = screen.getByRole('dialog', { name: 'Post the review to GitHub' })
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post to GitHub' }))
+    await settle()
+  })
+  const link = within(card()).getByRole('link', { name: 'On GitHub' })
+  expect(link.getAttribute('href')).toBe(url)
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  expect(within(card()).queryByRole('button', { name: 'Post to GitHub' })).toBeNull()
+  expect(within(card()).queryByText(/review.comment/)).toBeNull()
+  expect(sent('POST', '/api/repos/acme/app/pulls/2/review/post')).toHaveLength(2)
+
+  // A review of an older commit has no button, because its lines can differ from the diff.
+  headSha = 'sha-old'
+  await open(3)
+  await open(2)
+  expect(within(card()).queryByRole('button', { name: 'Post to GitHub' })).toBeNull()
+})

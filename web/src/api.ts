@@ -106,6 +106,8 @@ export function createApiClient(fetcher: typeof fetch = (input, init) => fetch(i
     pullDiff: (repo: string, number: number) => json<PullDiff>('GET', `${pull(repo, number)}/diff`),
     review: (repo: string, number: number) => orNull<Review>(`${pull(repo, number)}/review`),
     startReview: (repo: string, number: number) => json<RunningTask>('POST', `${pull(repo, number)}/review`),
+    // Posts the latest review to GitHub, and returns it with postedUrl.
+    postReview: (repo: string, number: number) => json<Review>('POST', `${pull(repo, number)}/review/post`),
     classifications: (repo: string) => json<Classification[]>('GET', `/api/repos/${repo}/classifications`),
     reviews: (repo: string) => json<Review[]>('GET', `/api/repos/${repo}/reviews`),
     classification: (repo: string, number: number) => orNull<Classification>(`${pull(repo, number)}/classification`),

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { key } from './logic'
-import { createStore, currentRepo, isClassifying, isMerging, isReviewing, isSettingUp, isStarred } from './store'
+import { createStore, currentRepo, isClassifying, isMerging, isPostingReview, isReviewing, isSettingUp, isStarred } from './store'
 import { failure, fakeEventSources, fakeFetch, fakeTimers, Gate, reply, settle, type Reply, type Seen } from './test/fakes'
 import { laneRow, requests } from './test/rows'
 import { approveAndMergeAction, type Classification, type Review, type RunningTask } from './types'
@@ -782,6 +782,29 @@ describe('store', () => {
     expect(s.state().repoSettings).toBeNull()
     await late
     expect(s.state().repoSettings?.repo).toBe('acme/app')
+  })
+
+  it('posts a review once at a time, keeps its link, and throws a refusal', async () => {
+    const gate = new Gate()
+    let fails = false
+    const posted = { ...review('Posted', '2026-11-16T10:00:00Z'), postedUrl: 'https://github.com/acme/app/pull/1#pullrequestreview-1' }
+    const s = await signedIn(async ({ path }) => {
+      if (path !== '/api/repos/acme/app/pulls/1/review/post') return undefined
+      await gate.wait()
+      return fails ? failure(409, 'This review is on GitHub already') : reply(200, posted)
+    })
+    s.sources.last().emit('review', { repo: 'acme/app', number: 1, review: review('Posted', '2026-11-16T10:00:00Z') })
+    const first = s.actions.postReview('acme/app', 1)
+    expect(await s.actions.postReview('acme/app', 1)).toBeNull()
+    expect(isPostingReview(s.state(), 'acme/app', 1)).toBe(true)
+    gate.open()
+    expect((await first)?.postedUrl).toBe(posted.postedUrl)
+    expect(s.state().reviews[key('acme/app', 1)]?.postedUrl).toBe(posted.postedUrl)
+    expect(isPostingReview(s.state(), 'acme/app', 1)).toBe(false)
+    fails = true
+    await expect(s.actions.postReview('acme/app', 1)).rejects.toThrow('This review is on GitHub already')
+    expect(isPostingReview(s.state(), 'acme/app', 1)).toBe(false)
+    expect(s.paths('/review/post')).toHaveLength(2)
   })
 
   it('closes the open PR when the repository changes', async () => {

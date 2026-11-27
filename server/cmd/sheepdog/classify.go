@@ -119,7 +119,7 @@ func upsertComment(ctx context.Context, gh *github.Client, repo string, number i
 
 // commentBody quotes the reason of the model, which comes from untrusted PR content, so that it cannot mention people or add a second marker.
 func commentBody(c github.CIClassification) string {
-	reason := strings.NewReplacer("@", "@\u200b", "<!--", "&lt;!--").Replace(strings.TrimSpace(c.Reason))
+	reason := review.SafeText(c.Reason)
 	quoted := "> " + strings.ReplaceAll(reason, "\n", "\n> ")
 	text := fmt.Sprintf("%s\n### Sheepdog classification: %d/10, %s\n\n%s\n\nModel `%s`, commit %s.", commentMarker, c.Score, dangerLabel(c.Score), quoted, c.Model, c.HeadSHA)
 	if c.DiffTruncated {

@@ -85,6 +85,8 @@ type fakeGitHub struct {
 	searches  []string
 	// holdSearch, when set, makes each search wait until it is closed.
 	holdSearch chan struct{}
+	// diff, when set, is the diff of every PR.
+	diff string
 }
 
 func (f *fakeGitHub) repoListCount(token string) int {
@@ -144,7 +146,13 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case strings.HasSuffix(r.URL.Path, "/contents/AGENTS.md"):
 			fmt.Fprintf(w, "agents of %s at %s", id.login, r.URL.Query().Get("ref"))
 		case strings.Contains(r.URL.Path, "/pulls/"):
-			fmt.Fprintf(w, "diff of %s for %s", r.URL.Path, id.login)
+			f.mu.Lock()
+			diff := f.diff
+			f.mu.Unlock()
+			if diff == "" {
+				diff = fmt.Sprintf("diff of %s for %s", r.URL.Path, id.login)
+			}
+			io.WriteString(w, diff)
 		default:
 			http.NotFound(w, r)
 		}

@@ -239,7 +239,7 @@ func TestSetupTemplate(t *testing.T) {
 		}
 	}
 	for _, global := range []bool{false, true} {
-		if template := rulesTemplate("a/model", global); !strings.Contains(template, "\n# review:\n#   model: ") {
+		if template := rulesTemplate("a/model", global); !strings.Contains(template, "\n# review:\n#   model: ") || !strings.Contains(template, "#   comment: false\n") {
 			t.Errorf("the template has no review model comment:\n%s", template)
 		}
 	}

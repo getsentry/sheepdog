@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS reviews (
 	findings_json TEXT NOT NULL,
 	diff_truncated INTEGER NOT NULL,
 	pr_updated_at TEXT NOT NULL,
-	created_at INTEGER NOT NULL
+	created_at INTEGER NOT NULL,
+	posted_url TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS reviews_by_pr ON reviews(user_id, repo, number, created_at);
 CREATE TABLE IF NOT EXISTS classifications (
@@ -147,19 +148,27 @@ func Open(path string, key []byte) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("the database %s is from an older version without users.github_id: delete it and start again", path)
 	}
-	// A repo_prefs table from before auto review keeps its settings and gets the column with auto review off.
-	var hasAutoReview bool
-	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info('repo_prefs') WHERE name = 'auto_review'`).Scan(&hasAutoReview); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if !hasAutoReview {
-		if _, err := db.Exec(`ALTER TABLE repo_prefs ADD COLUMN auto_review INTEGER NOT NULL DEFAULT 0`); err != nil {
+	// Tables from before these columns keep their rows, and the rows get the default of the column.
+	for _, column := range []struct{ table, name, definition string }{
+		{"repo_prefs", "auto_review", "INTEGER NOT NULL DEFAULT 0"},
+		{"reviews", "posted_url", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := addColumn(db, column.table, column.name, column.definition); err != nil {
 			db.Close()
 			return nil, err
 		}
 	}
 	return &Store{db: db, sealer: s}, nil
+}
+
+// addColumn adds the column when the table does not have it. The arguments are constants of this package.
+func addColumn(db *sql.DB, table, name, definition string) error {
+	var has bool
+	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info(?) WHERE name = ?`, table, name).Scan(&has); err != nil || has {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + name + ` ` + definition)
+	return err
 }
 
 func (s *Store) Close() error {
@@ -448,6 +457,8 @@ type Review struct {
 	DiffTruncated bool      `json:"diffTruncated"`
 	PRUpdatedAt   time.Time `json:"prUpdatedAt"`
 	CreatedAt     time.Time `json:"createdAt"`
+	// PostedURL is the link of the GitHub review that a user posted from this review, or "" before.
+	PostedURL string `json:"postedUrl,omitempty"`
 }
 
 // AddReview stores a review and sets its CreatedAt.
@@ -469,7 +480,7 @@ func (s *Store) AddReview(ctx context.Context, userID int64, r *Review) error {
 	return nil
 }
 
-const reviewColumns = `repo, number, head_sha, model, risk, summary, findings_json, diff_truncated, pr_updated_at, created_at`
+const reviewColumns = `repo, number, head_sha, model, risk, summary, findings_json, diff_truncated, pr_updated_at, created_at, posted_url`
 
 func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 	var (
@@ -477,7 +488,7 @@ func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 		findings, prUpdatedAt string
 		createdAt             int64
 	)
-	err := row.Scan(&r.Repo, &r.Number, &r.HeadSHA, &r.Model, &r.Risk, &r.Summary, &findings, &r.DiffTruncated, &prUpdatedAt, &createdAt)
+	err := row.Scan(&r.Repo, &r.Number, &r.HeadSHA, &r.Model, &r.Risk, &r.Summary, &findings, &r.DiffTruncated, &prUpdatedAt, &createdAt, &r.PostedURL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Review{}, ErrNotFound
 	}
@@ -499,6 +510,13 @@ func (s *Store) LatestReview(ctx context.Context, userID int64, repo string, num
 		SELECT `+reviewColumns+`
 		FROM reviews WHERE user_id = ? AND repo = ? AND number = ?
 		ORDER BY created_at DESC, rowid DESC LIMIT 1`, userID, repo, number))
+}
+
+// SetReviewPosted stores the link of the GitHub review that the user posted from the review with this creation time.
+func (s *Store) SetReviewPosted(ctx context.Context, userID int64, repo string, number int, createdAt time.Time, url string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE reviews SET posted_url = ? WHERE user_id = ? AND repo = ? AND number = ? AND created_at = ?`,
+		url, userID, repo, number, createdAt.UnixMilli())
+	return err
 }
 
 // LatestReviews returns the latest review of each PR of the repository, ordered by PR number.

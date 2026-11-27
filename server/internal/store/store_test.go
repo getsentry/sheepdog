@@ -929,3 +929,59 @@ func TestOpenAddsAutoReviewToOlderPrefs(t *testing.T) {
 		t.Errorf("prefs after auto review on %+v, %v", p, err)
 	}
 }
+
+func TestReviewPosted(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	add := func(summary string) Review {
+		t.Helper()
+		r := Review{Repo: "acme/app", Number: 7, HeadSHA: "sha", Review: review.Review{Risk: "green", Summary: summary, Findings: []review.Finding{}}}
+		if err := s.AddReview(ctx, alice, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	first := add("first")
+	time.Sleep(2 * time.Millisecond)
+	second := add("second")
+	if err := s.SetReviewPosted(ctx, alice, "acme/app", 7, second.CreatedAt, "https://github.com/acme/app/pull/7#pullrequestreview-1"); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := s.LatestReview(ctx, alice, "acme/app", 7)
+	if err != nil || latest.Summary != "second" || latest.PostedURL != "https://github.com/acme/app/pull/7#pullrequestreview-1" {
+		t.Errorf("latest review %+v, %v", latest, err)
+	}
+	if list, _ := s.LatestReviews(ctx, alice, "acme/app"); len(list) != 1 || list[0].PostedURL == "" {
+		t.Errorf("reviews %+v", list)
+	}
+	var posted int
+	s.db.QueryRow(`SELECT COUNT(*) FROM reviews WHERE posted_url != ''`).Scan(&posted)
+	if posted != 1 || first.PostedURL != "" {
+		t.Errorf("%d posted reviews, want only the second", posted)
+	}
+}
+
+func TestOpenAddsPostedURLToOlderReviews(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	key := newKey(t)
+	ctx := context.Background()
+	s, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	if _, err := s.db.Exec(`ALTER TABLE reviews DROP COLUMN posted_url`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO reviews (user_id, repo, number, head_sha, model, risk, summary, findings_json, diff_truncated, pr_updated_at, created_at)
+		VALUES (1, 'acme/app', 7, 'sha', 'm', 'green', 'old', '[]', 0, '2026-01-01T00:00:00Z', 1000)`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s = openStore(t, path, key)
+	if r, err := s.LatestReview(ctx, alice, "acme/app", 7); err != nil || r.Summary != "old" || r.PostedURL != "" {
+		t.Errorf("review of the older table %+v, %v", r, err)
+	}
+}

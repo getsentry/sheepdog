@@ -73,6 +73,8 @@ export interface Row {
   lane?: Lane
   // Missing without a CI score for the current head commit.
   classification?: CIClassification
+  // True when review.comment of the rules lets the user post a review of the row to GitHub.
+  postReviews?: boolean
 }
 
 // The result of the last poll. fetchedAt is null before the first successful poll.
@@ -153,6 +155,8 @@ export interface Review {
   diffTruncated: boolean
   prUpdatedAt: string
   createdAt: string
+  // The link of the GitHub review that the user posted from this review.
+  postedUrl?: string
 }
 
 // A danger score from 1 (no danger, can be merged) to 10 (extreme danger).

@@ -19,6 +19,8 @@ type Row struct {
 	github.Row
 	Lane           *Lane             `json:"lane,omitempty"`
 	Classification *CIClassification `json:"classification,omitempty"`
+	// PostReviews is true when review.comment of the rules lets the user post a review of the row to GitHub.
+	PostReviews bool `json:"postReviews,omitempty"`
 	// autoClassify is true when auto classify may classify the row. See autoWork.
 	autoClassify bool
 }
@@ -118,6 +120,7 @@ func (s *Server) fetchRequests(ctx context.Context, client *github.Client, user 
 			lane := rules.Evaluate(*laneRules, lanePR(row), classification)
 			out.Lane = &Lane{Name: lane.Name, Action: lane.Action, Notes: lane.Notes}
 			out.autoClassify = lane.NeedsClassification && !laneRules.Classification.CI && !row.IsDraft
+			out.PostReviews = laneRules.Review.Comment
 		}
 		result.Rows = append(result.Rows, out)
 	}

@@ -103,7 +103,8 @@ button.borderless {
   background: transparent;
 }
 
-button.small {
+button.small,
+.button.small {
   padding: 1px 8px;
   font-size: 12px;
 }

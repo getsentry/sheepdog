@@ -30,8 +30,10 @@ type Rules struct {
 }
 
 // ReviewRule fixes the model of every AI review of the repository. An empty model keeps the model of each user.
+// Comment lets a user post a review to GitHub.
 type ReviewRule struct {
-	Model string
+	Model   string
+	Comment bool
 }
 
 // ClassificationRule fixes the model of every classification of the repository. CI tells the server to read the score of the Sheepdog workflow.
@@ -101,7 +103,8 @@ type sheepdogYAML struct {
 }
 
 type review struct {
-	Model string `yaml:"model"`
+	Model   string `yaml:"model"`
+	Comment bool   `yaml:"comment"`
 }
 
 type neverAutomatic struct {
@@ -144,10 +147,10 @@ func Parse(data []byte) (Rules, error) {
 		rules.Classification = ClassificationRule{Model: c.Model, CI: c.CI, Comment: c.Comment}
 	}
 	if r := file.Review; r != nil {
-		if strings.TrimSpace(r.Model) == "" {
-			return Rules{}, errors.New("review.model must not be empty")
+		if strings.TrimSpace(r.Model) == "" && !r.Comment {
+			return Rules{}, errors.New("review needs a model or comment: true")
 		}
-		rules.Review = ReviewRule{Model: r.Model}
+		rules.Review = ReviewRule{Model: strings.TrimSpace(r.Model), Comment: r.Comment}
 	}
 
 	node := &file.Lanes

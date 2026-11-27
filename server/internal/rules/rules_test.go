@@ -92,6 +92,8 @@ func TestParseReview(t *testing.T) {
 		"version: 1\nreview:\n":                   {},
 		"version: 1\nreview:\n  model: r/model\n": {Review: ReviewRule{Model: "r/model"}},
 		"version: 1\nreview: {model: r/m}\nclassification: {model: c/m}\n": {Review: ReviewRule{Model: "r/m"}, Classification: ClassificationRule{Model: "c/m"}},
+		"version: 1\nreview:\n  comment: true\n":                           {Review: ReviewRule{Comment: true}},
+		"version: 1\nreview:\n  model: r/m\n  comment: false\n":            {Review: ReviewRule{Model: "r/m"}},
 	}
 	for data, want := range cases {
 		rules, err := Parse([]byte(data))
@@ -100,7 +102,8 @@ func TestParseReview(t *testing.T) {
 		}
 	}
 	for data, message := range map[string]string{
-		"version: 1\nreview:\n  model: ''\n":        "review.model must not be empty",
+		"version: 1\nreview:\n  model: ''\n":        "review needs a model or comment: true",
+		"version: 1\nreview:\n  comment: false\n":   "review needs a model or comment: true",
 		"version: 1\nreview:\n  ci: true\n":         "field ci not found",
 		"version: 1\nreview:\n  model: a\n  x: 1\n": "field x not found",
 	} {

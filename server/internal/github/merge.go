@@ -126,3 +126,28 @@ func (c *Client) EnableAutoMerge(ctx context.Context, pr MergePR, sha string) er
 	var data json.RawMessage
 	return c.graphql(ctx, enableAutoMergeMutation, map[string]any{"id": pr.ID, "method": strings.ToUpper(pr.MergeMethod()), "sha": sha}, &data)
 }
+
+// ReviewComment is a comment of a review on one line of the diff. Side is RIGHT for a line of the new file and LEFT for a deleted line.
+type ReviewComment struct {
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Side string `json:"side"`
+	Body string `json:"body"`
+}
+
+// CreateReview posts a review with the event COMMENT on the commit, and returns the URL of the review.
+// GitHub refuses the whole review when one comment names a line outside the diff.
+func (c *Client) CreateReview(ctx context.Context, repo string, number int, commit, body string, comments []ReviewComment) (string, error) {
+	if err := ValidRepo(repo); err != nil {
+		return "", err
+	}
+	if comments == nil {
+		comments = []ReviewComment{}
+	}
+	var created struct {
+		HTMLURL string `json:"html_url"`
+	}
+	err := c.write(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/pulls/%d/reviews", repo, number),
+		map[string]any{"commit_id": commit, "body": body, "event": "COMMENT", "comments": comments}, &created)
+	return created.HTMLURL, err
+}

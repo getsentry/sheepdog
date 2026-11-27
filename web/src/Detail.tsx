@@ -14,9 +14,9 @@ import {
   time,
   type ShownClassification,
 } from './logic'
-import { isClassifying, isMerging, isReviewing } from './store'
+import { isClassifying, isMerging, isPostingReview, isReviewing } from './store'
 import type { Finding, PullRequest, Review, Row } from './types'
-import { Capsule, ExternalLink, Spinner } from './ui'
+import { Capsule, ExternalLink, Modal, Spinner } from './ui'
 
 const truncatedNote = 'The diff was too large. The model saw only the first 200,000 characters.'
 
@@ -174,8 +174,9 @@ export function Detail({
             {reviewError && <p className="error">{reviewError}</p>}
             {review && (
               <ReviewSection
+                repo={repo}
+                row={row}
                 review={review}
-                prUpdatedAt={row.updatedAt}
                 inDiff={new Set(shownFindings.map((finding) => finding.index))}
                 onJump={(index) => setTarget({ index, at: Date.now() })}
               />
@@ -467,17 +468,37 @@ function ClassificationSection({ shown, prUpdatedAt }: { shown: ShownClassificat
 }
 
 // inDiff holds the indexes of the findings that the diff shows, and a click on their place jumps there.
+// The review can go to GitHub once, when the rules allow it and the review is of the current head commit, so that its lines match the diff.
 function ReviewSection({
+  repo,
+  row,
   review,
-  prUpdatedAt,
   inDiff,
   onJump,
 }: {
+  repo: string
+  row: Row
   review: Review
-  prUpdatedAt: string
   inDiff: ReadonlySet<number>
   onJump: (index: number) => void
 }) {
+  const state = useAppState()
+  const { actions } = useStore()
+  const [confirming, setConfirming] = useState(false)
+  const [postError, setPostError] = useState<string | null>(null)
+  const posting = isPostingReview(state, repo, row.number)
+  const canPost = row.postReviews === true && review.headSha === row.headSha && !review.postedUrl
+
+  async function post() {
+    setConfirming(false)
+    setPostError(null)
+    try {
+      await actions.postReview(repo, row.number)
+    } catch (failure) {
+      setPostError(failure instanceof Error ? failure.message : String(failure))
+    }
+  }
+
   return (
     <section className={`card column ${review.risk}`} aria-label="Review">
       <div className="card-header">
@@ -487,13 +508,50 @@ function ReviewSection({
         <span className="muted small-text">
           {review.model}, {shortTime(review.createdAt)}
         </span>
+        {review.postedUrl ? (
+          <ExternalLink href={review.postedUrl} className="button small">
+            On GitHub
+          </ExternalLink>
+        ) : (
+          canPost && (
+            <button type="button" className="small" disabled={posting} onClick={() => setConfirming(true)}>
+              {posting ? (
+                <>
+                  <Spinner label="Posting" /> Posting…
+                </>
+              ) : (
+                'Post to GitHub'
+              )}
+            </button>
+          )
+        )}
       </div>
-      {time(prUpdatedAt) > time(review.prUpdatedAt) && <p className="note">The PR changed after this review.</p>}
+      {postError && <p className="error">{postError}</p>}
+      {time(row.updatedAt) > time(review.prUpdatedAt) && <p className="note">The PR changed after this review.</p>}
       {review.diffTruncated && <p className="note">{truncatedNote}</p>}
       <p className="plain">{review.summary}</p>
       {review.findings.map((finding, index) => (
         <FindingView key={index} finding={finding} onJump={inDiff.has(index) ? () => onJump(index) : undefined} />
       ))}
+      {confirming && (
+        <Modal label="Post the review to GitHub" className="confirm" onClose={() => setConfirming(false)}>
+          <h2>Post this review to GitHub?</h2>
+          <p className="muted">
+            Sheepdog posts the review with your GitHub account as a comment, without an approval. A finding on a line of
+            the diff becomes a comment on that line, and the summary and the other findings go into the text of the
+            review. Everyone who can see the pull request can read it.
+          </p>
+          <div className="buttons">
+            <span className="spacer" />
+            <button type="button" onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+            <button type="button" className="primary" onClick={() => void post()}>
+              Post to GitHub
+            </button>
+          </div>
+        </Modal>
+      )}
     </section>
   )
 }

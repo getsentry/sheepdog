@@ -44,6 +44,7 @@ const rows: Row[] = [
     author: 'dependabot[bot]',
     reasons: ['you'],
     headSha: 'sha2',
+    postReviews: true,
     lane: {
       name: 'safe',
       action: 'approve-and-automerge',
@@ -279,6 +280,9 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
         return json(route, 200, [stored])
       case `GET /api/repos/${sample}/reviews`:
         return json(route, 200, [review])
+      case `POST /api/repos/${sample}/pulls/2/review/post`:
+        review.postedUrl = `https://github.com/${sample}/pull/2#pullrequestreview-1`
+        return json(route, 200, review)
       case `GET /api/repos/${bare}/reviews`:
       case `GET /api/repos/${bare}/classifications`:
         return globalRules
@@ -350,6 +354,16 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(finding).toBeInViewport()
   await expect(finding.locator('.finding')).toBeFocused()
   await page.screenshot({ path: join(screenshots, '15-diff.png') })
+
+  // The review goes to GitHub only after the confirmation, and then the card links it.
+  const reviewCard = page.getByRole('region', { name: 'Review' })
+  await reviewCard.getByRole('button', { name: 'Post to GitHub' }).click()
+  const postDialog = page.getByRole('dialog', { name: 'Post the review to GitHub' })
+  await expect(postDialog).toContainText('Everyone who can see the pull request can read it.')
+  await page.screenshot({ path: join(screenshots, '16-post-review.png') })
+  await postDialog.getByRole('button', { name: 'Post to GitHub' }).click()
+  await expect(reviewCard.getByRole('link', { name: 'On GitHub' })).toHaveAttribute('href', `https://github.com/${sample}/pull/2#pullrequestreview-1`)
+  await expect(reviewCard.getByRole('button', { name: 'Post to GitHub' })).toHaveCount(0)
   // The header of the detail panel lines up with the sidebar header and stays on top while the PR scrolls.
   const detailHeader = page.locator('.detail-header')
   expect((await detailHeader.boundingBox())?.height).toBe((await page.locator('.sidebar > header').boundingBox())?.height)
@@ -393,7 +407,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await warning.getByRole('button', { name: 'Create sheepdog.yml' }).click()
   const setupDialog = page.getByRole('dialog', { name: 'Create sheepdog.yml' })
   await expect(setupDialog.getByLabel('sheepdog.yml')).toHaveValue(template)
-  expect(writes).toEqual(['POST /api/session', 'PUT /api/settings', 'PUT /api/settings'])
+  expect(writes).toEqual(['POST /api/session', 'PUT /api/settings', `POST /api/repos/${sample}/pulls/2/review/post`, 'PUT /api/settings'])
   await page.screenshot({ path: join(screenshots, '6-setup-dialog.png') })
 
   await setupDialog.getByRole('button', { name: 'Open pull request' }).click()
@@ -405,7 +419,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(setupDialog).toBeHidden()
   await page.screenshot({ path: join(screenshots, '7-setup-waiting.png') })
 
-  expect(writes).toEqual(['POST /api/session', 'PUT /api/settings', 'PUT /api/settings', `POST /api/repos/${bare}/setup`])
+  expect(writes).toEqual(['POST /api/session', 'PUT /api/settings', `POST /api/repos/${sample}/pulls/2/review/post`, 'PUT /api/settings', `POST /api/repos/${bare}/setup`])
   expect(reads).not.toContain(`GET /api/repos/${bare}/classifications`)
   expect(setupBody).toEqual({ content: template })
 
@@ -421,7 +435,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await picker.getByRole('searchbox').fill('')
   await page.screenshot({ path: join(screenshots, '8-starred-picker.png') })
   expect(starred).toEqual(['getsentry/sentry-react-native'])
-  expect(writes.slice(4)).toEqual(['PUT /api/repos/getsentry/sentry-react-native/star'])
+  expect(writes.slice(5)).toEqual(['PUT /api/repos/getsentry/sentry-react-native/star'])
   expect(repo).toBe(bare)
 
   await page.keyboard.press('Escape')
@@ -471,7 +485,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(refreshSwitch).not.toBeChecked()
   await expect(classifySwitch).toBeChecked()
   await expect(reviewSwitch).toBeChecked()
-  expect(writes.slice(5)).toEqual([
+  expect(writes.slice(6)).toEqual([
     'PUT /api/settings',
     'POST /api/review-requests/refresh',
     `PUT /api/repos/${sample}/settings`,

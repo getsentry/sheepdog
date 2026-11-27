@@ -151,6 +151,7 @@ classification:
   comment: true
 review:
   model: anthropic/claude-opus-4.5
+  comment: true
 ```
 
 - `version` must be `1`. The server rejects unknown keys.
@@ -170,8 +171,9 @@ review:
 - `classification.ci: true` tells the server to read the score of the Sheepdog workflow for each PR. See [Classification in CI](#classification-in-ci).
 - `classification.comment: true` tells the Sheepdog workflow to post the score as a comment on the PR. The default is `false`. See [Comment on the PR](#comment-on-the-pr).
 - The model of the user is the "Default model" in Settings of the web app. Sheepdog uses it for a classification or a review when the rules set no `classification.model` or `review.model`. A classification or a review needs it and the OpenRouter key of the user also when the rules set a model.
-- `review` is optional. If you set it, `model` is required.
+- `review` is optional. If you set it, it needs `model` or `comment: true`.
 - `review.model` is the OpenRouter model for every AI review of the repository, read from the base branch of the PR. A click on "Review" uses this model instead of the model of the user, and the stored review names this model. Without `review.model`, a review uses the model of the user, also when `classification.model` is set. So a repository can use a cheap model for the many classifications and a strong model for the few reviews.
+- `review.comment: true` lets each user post an AI review to GitHub with the "Post to GitHub" button of the review in the web app. See [Post a review to GitHub](#post-a-review-to-github). The default is `false`. Sheepdog never posts a review by itself.
 
 Each row has notes that explain its lane. For a PR in an `approve-and-automerge` lane, the notes list the conditions that matched. For every other PR, the notes list the conditions that failed in the closest `approve-and-automerge` lane, for example `Needs a classification of the current commit`.
 
@@ -232,6 +234,16 @@ After each poll, the server then classifies a PR only when all of these conditio
 6. The user has fewer than 2 classifications that run. The server starts the next one at the next poll.
 
 The classifications show in the running tasks, and the user can stop them. Auto classify does not approve or merge. "Approve and merge" still needs a click. When the user turns auto classify on, the server checks GitHub at once.
+
+## Post a review to GitHub
+
+`POST /api/repos/{owner}/{name}/pulls/{number}/review/post` posts the latest stored review of the user to the PR, with the GitHub account of the user. It posts one GitHub review with the event `COMMENT`, so it does not approve and does not request changes:
+
+- A finding whose line is in the diff becomes a comment on that line, on the new side for an added or unchanged line and on the old side for a deleted line.
+- The body has the risk, the summary, the findings outside the diff, the model, and the commit. It starts with `<!-- sheepdog-review -->`.
+- Text of the model comes from untrusted PR content, so Sheepdog breaks `@` mentions and HTML comments in it.
+
+The route returns the review with `postedUrl`, the link of the GitHub review, and sends a `review` event with it. It returns 409 when the rules of the base branch (or the global rules) do not have `review.comment: true`, when the review is not of the current head commit (review the PR again first), when the review is on GitHub already, or while the same review is being posted. The rows of `GET /api/review-requests` have `postReviews: true` when the rules allow a post.
 
 ## Auto review
 
@@ -355,6 +367,7 @@ A review or a classification sends at most 200,000 characters of the diff. For a
 | `GET /api/repos/{owner}/{name}/pulls/{number}` | The details of a PR. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/diff` | The unified diff of a PR as `{"diff", "truncated"}`. A diff larger than 2 MB ends after its last full line before 2 MB, and then `truncated` is `true`. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/review` | The latest stored AI review of the PR, or 404. |
+| `POST /api/repos/{owner}/{name}/pulls/{number}/review/post` | Post the latest review to GitHub. See [Post a review to GitHub](#post-a-review-to-github). |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |
 | `GET /api/repos/{owner}/{name}/reviews` | The latest stored AI review of each PR of the repository, ordered by PR number. An empty list when there is none. The web app marks the reviewed PRs in the list with it. |
 | `GET /api/repos/{owner}/{name}/classifications` | The latest stored classification of each PR of the repository, ordered by PR number. An empty list when there is none. |

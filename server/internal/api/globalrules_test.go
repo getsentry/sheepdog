@@ -85,9 +85,7 @@ func TestRepositoryWithoutRulesUsesGlobalRules(t *testing.T) {
 	}
 
 	h.classify("alice", noRulesRepo, 101, "sha-1", 1)
-	if got := h.repoll(alice, "alice"); got.Rows[0].Lane.Name != "safe" {
-		t.Fatalf("lane after a low score %+v", got.Rows[0].Lane)
-	}
+	h.repollUntil(alice, "alice", func(r Requests) bool { return r.Rows[0].Lane.Name == "safe" })
 	var result map[string]string
 	h.json("POST", "/api/repos/getsentry/no-rules/pulls/101/approve-and-merge", alice, map[string]string{"headSha": "sha-1"}, http.StatusOK, &result)
 	if result["result"] != "merged" || !slices.Contains(h.github.recorded(), `alice POST /repos/getsentry/no-rules/issues/101/labels {"labels":["ready-to-merge"]}`) {
@@ -99,9 +97,9 @@ func TestRepositoryWithoutRulesUsesGlobalRules(t *testing.T) {
 	h.server.mu.Lock()
 	clear(h.server.rulesChecks)
 	h.server.mu.Unlock()
-	if got := h.repoll(alice, "alice"); got.GlobalRules || got.Setup != nil || !slices.Equal(got.Lanes, []string{"repo_lane"}) {
-		t.Errorf("requests with a rules file %+v", got)
-	}
+	h.repollUntil(alice, "alice", func(r Requests) bool {
+		return !r.GlobalRules && r.Setup == nil && slices.Equal(r.Lanes, []string{"repo_lane"})
+	})
 
 	h.github.removeRules(noRulesRepo + "@main")
 	h.server.mu.Lock()

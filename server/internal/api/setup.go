@@ -41,7 +41,8 @@ func rulesTemplate(model string, global bool) string {
 		classification = "# The OpenRouter model for every classification of " + scope + ".\nclassification:\n  model: " + string(quoted) + "\n" + ci
 	}
 	review := "# The OpenRouter model for every AI review of " + scope + ". Without it, each user reviews with the own model.\n" +
-		"# review:\n#   model: anthropic/claude-opus-4.5\n"
+		"# review:\n#   model: anthropic/claude-opus-4.5\n" +
+		"#   # comment: true shows a button that posts a review to GitHub, with a comment on the line of each finding.\n#   comment: false\n"
 	return header + `# A pull request goes to the first lane whose conditions all match. Every other pull request needs a manual review.
 # See ` + docsURL + `#review-lanes
 version: 1

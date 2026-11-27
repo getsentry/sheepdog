@@ -168,6 +168,11 @@ func (f *fakeGitHub) serveWrite(w http.ResponseWriter, r *http.Request, login st
 		return
 	}
 	f.record(login, r.Method+" "+r.URL.Path+" "+string(body))
+	if strings.HasSuffix(r.URL.Path, "/reviews") && strings.Contains(string(body), `"event":"COMMENT"`) {
+		pull := strings.Replace(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos"), "/reviews"), "/pulls/", "/pull/", 1)
+		fmt.Fprintf(w, `{"html_url":"https://github.com%s#pullrequestreview-77"}`, pull)
+		return
+	}
 	if !f.serveSetupWrite(w, r, body) {
 		io.WriteString(w, `{}`)
 	}
@@ -201,6 +206,22 @@ func (h *harness) repoll(session, login string) Requests {
 	before := h.waitRequests(session, func(r Requests) bool { return r.FetchedAt != nil }).FetchedAt
 	h.server.pollNow(h.userID(login))
 	return h.waitRequests(session, func(r Requests) bool { return r.FetchedAt.After(*before) })
+}
+
+// repollUntil starts polls until one result passes check. A poll that an earlier action started can end after a change of the test,
+// with the data from before the change, so the first result after the change can be old.
+func (h *harness) repollUntil(session, login string, check func(Requests) bool) Requests {
+	h.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := h.repoll(session, login)
+		if check(got) {
+			return got
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatalf("no poll passed the check, the last one: %+v", got)
+		}
+	}
 }
 
 const approvePath = "/api/repos/getsentry/alice-repo/pulls/101/approve-and-merge"

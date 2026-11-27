@@ -49,6 +49,8 @@ type Server struct {
 	rulesChecks map[rulesKey]rulesCheck
 	// autoTried holds for each user the head commit that auto classify or auto review started, keyed by the task kind and the PR key.
 	autoTried map[int64]map[string]string
+	// posting holds "user ID PR key" while a review of that PR goes to GitHub.
+	posting map[string]bool
 }
 
 type cachedRepos struct {
@@ -80,6 +82,7 @@ func New(ctx context.Context, cfg config.Config, db *store.Store) *Server {
 		repoCache:      map[int64]cachedRepos{},
 		rulesChecks:    map[rulesKey]rulesCheck{},
 		autoTried:      map[int64]map[string]string{},
+		posting:        map[string]bool{},
 	}
 }
 
@@ -139,6 +142,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/diff", s.authed(s.pullDiff))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/review", s.authed(s.getReview))
 	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/review", s.authed(s.startReview))
+	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{number}/review/post", s.authed(s.postReview))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/reviews", s.authed(s.listReviews))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/classifications", s.authed(s.listClassifications))
 	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{number}/classification", s.authed(s.getClassification))

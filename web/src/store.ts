@@ -59,6 +59,8 @@ export interface State {
   settingUp: ReadonlySet<string>
   starring: ReadonlySet<string>
   savingPreferences: ReadonlySet<string>
+  // Keyed by "owner/name#number".
+  postingReviews: ReadonlySet<string>
 }
 
 type Field =
@@ -78,7 +80,14 @@ type Field =
   | 'connectionError'
   | 'error'
 
-type Pending = 'startingReviews' | 'startingClassifications' | 'merging' | 'settingUp' | 'starring' | 'savingPreferences'
+type Pending =
+  | 'startingReviews'
+  | 'startingClassifications'
+  | 'merging'
+  | 'settingUp'
+  | 'starring'
+  | 'savingPreferences'
+  | 'postingReviews'
 
 export type Action =
   | { type: 'signedIn'; login: string }
@@ -133,6 +142,7 @@ export const initialState: State = {
   settingUp: new Set(),
   starring: new Set(),
   savingPreferences: new Set(),
+  postingReviews: new Set(),
 }
 
 export function currentRepo(state: State): string {
@@ -158,6 +168,10 @@ export function isClassifying(state: State, repo: string, number: number): boole
 
 export function isMerging(state: State, repo: string, number: number): boolean {
   return state.merging.has(key(repo, number))
+}
+
+export function isPostingReview(state: State, repo: string, number: number): boolean {
+  return state.postingReviews.has(key(repo, number))
 }
 
 export function isSettingUp(state: State, repo: string): boolean {
@@ -747,6 +761,24 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
         }
       }
       if (failures.length > 0) set({ error: ['Approve and merge failed.', ...failures].join('\n') })
+    },
+
+    // null when the result no longer matters, or while the review is being posted. Throws an ApiError that the review card shows.
+    async postReview(repo: string, number: number): Promise<Review | null> {
+      const k = key(repo, number)
+      if (state.postingReviews.has(k)) return null
+      const generation = state.generation
+      dispatch({ type: 'pending', set: 'postingReviews', key: k, on: true })
+      try {
+        const posted = await checked((client) => client.postReview(repo, number))
+        dispatch({ type: 'reviewLoaded', key: k, review: posted, previousError: state.reviewErrors[k] })
+        return posted
+      } catch (error) {
+        if (error instanceof Cancelled) return null
+        throw error
+      } finally {
+        if (generation === state.generation) dispatch({ type: 'pending', set: 'postingReviews', key: k, on: false })
+      }
     },
 
     // null when the result no longer matters. Throws an ApiError that the setup dialog shows.
