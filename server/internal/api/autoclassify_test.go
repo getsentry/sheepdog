@@ -158,3 +158,25 @@ func TestAutoClassifyRunsTwoAtATime(t *testing.T) {
 		t.Errorf("running %v after the cancel", keys)
 	}
 }
+
+func TestSettingsListAutoClassifyRepos(t *testing.T) {
+	h := newHarness(t, nil)
+	alice, bob := h.signIn(aliceToken), h.signIn(bobToken)
+	h.repoSettings(alice, "GetSentry/Zeta", map[string]bool{"autoClassify": true})
+	h.repoSettings(alice, aliceRepo, map[string]bool{"autoClassify": true})
+	h.repoSettings(alice, noRulesRepo, map[string]bool{"autoRefresh": false})
+	var settings settingsResponse
+	h.json("GET", "/api/settings", alice, nil, http.StatusOK, &settings)
+	if !slices.Equal(settings.AutoClassifyRepos, []string{aliceRepo, "getsentry/zeta"}) {
+		t.Errorf("alice repositories %v", settings.AutoClassifyRepos)
+	}
+	h.repoSettings(alice, "getsentry/zeta", map[string]bool{"autoClassify": false})
+	h.json("PUT", "/api/repos/getsentry/sentry-cocoa/star", alice, nil, http.StatusOK, &settings)
+	if !slices.Equal(settings.AutoClassifyRepos, []string{aliceRepo}) {
+		t.Errorf("alice repositories after a change %v", settings.AutoClassifyRepos)
+	}
+	h.json("GET", "/api/settings", bob, nil, http.StatusOK, &settings)
+	if settings.AutoClassifyRepos == nil || len(settings.AutoClassifyRepos) != 0 {
+		t.Errorf("bob repositories %#v", settings.AutoClassifyRepos)
+	}
+}

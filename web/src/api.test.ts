@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ApiError, createApiClient } from './api'
 import { failure, fakeFetch, reply } from './test/fakes'
 
-const settings = { repo: 'getsentry/sentry-react-native', model: 'google/gemini-4-hydrogen', hasOpenRouterKey: true, starred: [] }
+const settings = { repo: 'getsentry/sentry-react-native', model: 'google/gemini-4-hydrogen', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [] }
 const task = {
   id: 'S6L32X34DAKG7WI2CRMWGRYNTT',
   kind: 'review',

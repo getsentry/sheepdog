@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useAppState, useStore } from './context'
 import { dangerTone, elapsed, relativeTime } from './format'
-import { isOutdated, key, laneSections, shownClassification, starredFirst, type LaneSection } from './logic'
+import { isOutdated, key, laneSections, pickerOrder, shownClassification, type LaneSection } from './logic'
 import { RepoSettings } from './RepoSettings'
-import { currentRepo, hasNoRules, isMerging, isSettingUp, isStarred } from './store'
+import { currentRepo, hasNoRules, isAutoClassified, isMerging, isSettingUp, isStarred } from './store'
 import type { PullLink, Row, Setup } from './types'
 import {
   Capsule,
   ExternalLink,
+  GaugeIcon,
   GearIcon,
   Modal,
   RefreshIcon,
@@ -79,7 +80,9 @@ function RepoPicker() {
   const repo = currentRepo(state)
   // The server keeps the name in lower case. The repository list has the name as GitHub shows it.
   const name = state.repositories?.find((item) => item.toLowerCase() === repo.toLowerCase()) ?? repo
-  const repositories = state.repositories && starredFirst(state.repositories, state.settings?.starred ?? [])
+  const repositories =
+    state.repositories &&
+    pickerOrder(state.repositories, state.settings?.starred ?? [], state.settings?.autoClassifyRepos ?? [])
 
   return (
     <>
@@ -112,16 +115,23 @@ function RepoPicker() {
               const starred = isStarred(state, item)
               const label = starred ? 'Remove star' : 'Star'
               return (
-                <button
-                  type="button"
-                  className={`star borderless icon${starred ? ' starred' : ''}`}
-                  title={label}
-                  aria-label={label}
-                  disabled={state.settings === null}
-                  onClick={() => void actions.toggleStar(item)}
-                >
-                  <StarIcon filled={starred} />
-                </button>
+                <>
+                  {isAutoClassified(state, item) && (
+                    <span className="repo-flag" role="img" aria-label="Auto-classify is on" title="Auto-classify is on">
+                      <GaugeIcon />
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className={`star borderless icon${starred ? ' starred' : ''}`}
+                    title={label}
+                    aria-label={label}
+                    disabled={state.settings === null}
+                    onClick={() => void actions.toggleStar(item)}
+                  >
+                    <StarIcon filled={starred} />
+                  </button>
+                </>
               )
             }}
           />

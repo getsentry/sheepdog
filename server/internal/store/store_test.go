@@ -790,3 +790,42 @@ func TestOpenAddsGlobalRulesToAnOlderDatabase(t *testing.T) {
 		t.Errorf("rules of the older database %q, %v", content, err)
 	}
 }
+
+func TestAutoClassifyRepos(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
+	repos := func(user int64) []string {
+		t.Helper()
+		list, err := s.AutoClassifyRepos(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list
+	}
+	if list := repos(alice); list == nil || len(list) != 0 {
+		t.Errorf("repositories without settings %#v, want an empty list", list)
+	}
+	off, on := false, true
+	for _, repo := range []string{"acme/zeta", "acme/alpha", "acme/off"} {
+		if err := s.UpdatePrefs(ctx, alice, repo, PrefsUpdate{AutoClassify: &on}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.UpdatePrefs(ctx, alice, "acme/off", PrefsUpdate{AutoClassify: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdatePrefs(ctx, alice, "acme/refresh", PrefsUpdate{AutoRefresh: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdatePrefs(ctx, bob, "acme/bob", PrefsUpdate{AutoClassify: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if list := repos(alice); !slices.Equal(list, []string{"acme/alpha", "acme/zeta"}) {
+		t.Errorf("alice repositories %v", list)
+	}
+	if list := repos(bob); !slices.Equal(list, []string{"acme/bob"}) {
+		t.Errorf("bob repositories %v", list)
+	}
+}

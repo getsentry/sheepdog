@@ -130,6 +130,8 @@ type settingsResponse struct {
 	Model            string   `json:"model"`
 	HasOpenRouterKey bool     `json:"hasOpenRouterKey"`
 	Starred          []string `json:"starred"`
+	// AutoClassifyRepos are the repositories with auto classify on, in name order.
+	AutoClassifyRepos []string `json:"autoClassifyRepos"`
 	// GlobalRules is the rules file text for repositories without .github/sheepdog.yml, or "" without one.
 	GlobalRules string `json:"globalRules"`
 }
@@ -140,13 +142,19 @@ func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user stor
 		internalError(w, err)
 		return
 	}
+	autoClassify, err := s.store.AutoClassifyRepos(r.Context(), user.ID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 	globalRules, err := s.store.GlobalRules(r.Context(), user.ID)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, settingsResponse{
-		Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred, GlobalRules: globalRules,
+		Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred,
+		AutoClassifyRepos: autoClassify, GlobalRules: globalRules,
 	})
 }
 

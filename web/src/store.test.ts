@@ -7,7 +7,7 @@ import { approveAndMergeAction, type Classification, type Review, type RunningTa
 
 const notAllowed = 'This GitHub account is not allowed on this server'
 const badSession = 'The session is not valid. Sign in again'
-const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [] }
+const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [] }
 
 const task: RunningTask = {
   id: 'T1',
@@ -361,14 +361,14 @@ describe('store', () => {
       if (owner === 'A' && method === 'PUT' && path === '/api/settings') {
         held += 1
         await gate.wait()
-        return reply(200, { repo: 'acme/old', model: '', hasOpenRouterKey: false, starred: [] })
+        return reply(200, { repo: 'acme/old', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [] })
       }
       if (owner === 'A' && path === '/api/repos') {
         held += 1
         await gate.wait()
         return failure(401, badSession)
       }
-      if (owner === 'B' && path === '/api/settings') return reply(200, { repo: 'bob/new', model: '', hasOpenRouterKey: false, starred: [] })
+      if (owner === 'B' && path === '/api/settings') return reply(200, { repo: 'bob/new', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [] })
     })
     const select = s.actions.selectRepo('acme/old')
     const repos = s.actions.loadRepositories()
@@ -712,6 +712,28 @@ describe('store', () => {
       { autoClassify: true },
       { autoRefresh: true },
     ])
+  })
+
+  it('keeps the list of repositories with auto classify after a change of the switch', async () => {
+    let fails = false
+    const s = await signedIn(({ method, path }) => {
+      if (path === '/api/settings') return reply(200, { ...settings, autoClassifyRepos: ['acme/web'] })
+      if (path !== '/api/repos/acme/app/settings') return undefined
+      if (method === 'GET') return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false })
+      return fails ? failure(500, 'Internal server error') : reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: true })
+    })
+    await settle()
+    await s.actions.loadRepoSettings('acme/app')
+    await s.actions.setRepoPreference('autoClassify', true)
+    expect(s.state().settings?.autoClassifyRepos).toEqual(['acme/app', 'acme/web'])
+    await s.actions.setRepoPreference('autoRefresh', false)
+    expect(s.state().settings?.autoClassifyRepos).toEqual(['acme/app', 'acme/web'])
+    fails = true
+    await s.actions.setRepoPreference('autoClassify', false)
+    expect(s.state().settings?.autoClassifyRepos).toEqual(['acme/app', 'acme/web'])
+    fails = false
+    await s.actions.setRepoPreference('autoClassify', false)
+    expect(s.state().settings?.autoClassifyRepos).toEqual(['acme/web'])
   })
 
   it('shows no settings of another repository, also when its load answers late', async () => {

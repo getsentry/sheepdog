@@ -270,6 +270,24 @@ func (s *Store) Prefs(ctx context.Context, userID int64, repo string) (Prefs, er
 	return p, err
 }
 
+// AutoClassifyRepos returns the repositories where the user has auto classify on, in name order. The list is empty, not nil, without them.
+func (s *Store) AutoClassifyRepos(ctx context.Context, userID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT repo FROM repo_prefs WHERE user_id = ? AND auto_classify ORDER BY repo`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	repos := []string{}
+	for rows.Next() {
+		var repo string
+		if err := rows.Scan(&repo); err != nil {
+			return nil, err
+		}
+		repos = append(repos, repo)
+	}
+	return repos, rows.Err()
+}
+
 // UpdatePrefs changes the preferences of the user for the repository. A new row starts from the defaults of Prefs.
 func (s *Store) UpdatePrefs(ctx context.Context, userID int64, repo string, update PrefsUpdate) error {
 	_, err := s.db.ExecContext(ctx, `

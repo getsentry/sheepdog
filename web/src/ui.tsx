@@ -159,6 +159,20 @@ export function StarIcon({ filled }: { filled: boolean }) {
   )
 }
 
+// The danger score of a classification.
+export function GaugeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <path d="M3.5 14a8.5 8.5 0 1 1 17 0" />
+        <path d="M12 14l4-5" />
+        <path d="M7 18.5h10" />
+      </g>
+      <circle cx="12" cy="14" r="1.8" fill="currentColor" />
+    </svg>
+  )
+}
+
 export function SlidersIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">

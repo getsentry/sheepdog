@@ -903,6 +903,13 @@ dialog::backdrop {
   color: var(--muted);
 }
 
+.search-list .repo-flag {
+  display: inline-flex;
+  flex: none;
+  padding: 4px;
+  color: var(--accent);
+}
+
 .search-list li button.starred {
   color: var(--yellow);
 }

@@ -11,6 +11,8 @@ export interface Settings {
   hasOpenRouterKey: boolean
   // The starred repositories in lower case and in name order.
   starred: string[]
+  // The repositories with auto classify on, in lower case and in name order.
+  autoClassifyRepos: string[]
   // The rules for repositories without .github/sheepdog.yml, or "" without them.
   globalRules: string
 }

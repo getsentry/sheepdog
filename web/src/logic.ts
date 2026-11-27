@@ -17,11 +17,13 @@ export function time(text: string): number {
   return new Date(text).getTime()
 }
 
-// Starred repositories first, then the others, both in the order of the list. starred is in lower case.
-export function starredFirst(repositories: string[], starred: readonly string[]): string[] {
+// Starred repositories first, then the ones with automation on, then the others, each part in the order of the list.
+// starred and automated are in lower case.
+export function pickerOrder(repositories: string[], starred: readonly string[], automated: readonly string[]): string[] {
   const stars = new Set(starred)
-  const isStarred = (repo: string) => stars.has(repo.toLowerCase())
-  return [...repositories.filter(isStarred), ...repositories.filter((repo) => !isStarred(repo))]
+  const auto = new Set(automated)
+  const part = (repo: string) => (stars.has(repo.toLowerCase()) ? 0 : auto.has(repo.toLowerCase()) ? 1 : 2)
+  return [0, 1, 2].flatMap((wanted) => repositories.filter((repo) => part(repo) === wanted))
 }
 
 export function canApproveAndMerge(row: Row): boolean {

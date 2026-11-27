@@ -633,16 +633,16 @@ func TestUsersSeeOnlyOwnData(t *testing.T) {
 
 	var settings settingsResponse
 	h.json("PUT", "/api/settings", alice, map[string]string{"repo": aliceRepo, "model": "m/alice", "openRouterKey": aliceKey}, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}, AutoClassifyRepos: []string{}}) {
 		t.Errorf("alice settings %+v", settings)
 	}
 	h.json("GET", "/api/settings", bob, nil, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}, AutoClassifyRepos: []string{}}) {
 		t.Errorf("bob settings before PUT %+v", settings)
 	}
 	h.json("PUT", "/api/settings", bob, map[string]string{"repo": bobRepo, "openRouterKey": bobWrongKey}, http.StatusOK, &settings)
 	h.json("GET", "/api/settings", alice, nil, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}, AutoClassifyRepos: []string{}}) {
 		t.Errorf("alice settings after bob PUT %+v", settings)
 	}
 

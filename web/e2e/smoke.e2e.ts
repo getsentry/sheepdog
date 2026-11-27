@@ -165,7 +165,14 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
 
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-  const settings = () => ({ repo, model: 'anthropic/claude-sonnet-5.5', hasOpenRouterKey: true, starred, globalRules })
+  const settings = () => ({
+    repo,
+    model: 'anthropic/claude-sonnet-5.5',
+    hasOpenRouterKey: true,
+    starred,
+    autoClassifyRepos: [...repoSettings].filter(([, value]) => value.autoClassify).map(([name]) => name).sort(),
+    globalRules,
+  })
   const requests = (): Requests =>
     repo === sample
       ? { repo, fetchedAt: ago(0.2), rows, lanes: ['safe', 'docs', 'quick_look'], defaultBranch: 'main' }
@@ -406,6 +413,10 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await page.keyboard.press('Escape')
 
   await page.getByRole('button', { name: /reviewer-react-native-sample/ }).click()
+  await expect(names).toHaveText(['getsentry/sentry-react-native', sample, 'getsentry/sentry-cocoa', bare])
+  await expect(names.nth(1).getByRole('img', { name: 'Auto-classify is on' })).toBeVisible()
+  await expect(picker.getByRole('img', { name: 'Auto-classify is on' })).toHaveCount(1)
+  await page.screenshot({ path: join(screenshots, '14-auto-classify-picker.png') })
   await picker.getByRole('searchbox').fill('capacitor')
   await picker.getByRole('button', { name: bare }).click()
   const notice = page.getByRole('region', { name: 'Setup' })

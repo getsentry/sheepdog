@@ -62,7 +62,7 @@ async function signedIn(handler: (seen: Seen) => ReturnType<Parameters<typeof fa
       case 'GET /api/me':
         return reply(200, { login: 'alwx' })
       case 'GET /api/settings':
-        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [] })
+        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [] })
       case 'GET /api/repos':
         return reply(200, ['acme/app'])
       case 'GET /api/models':
@@ -329,10 +329,10 @@ it('shows the starred repositories first, also while searching, and a click on a
   let starred = ['acme/tools']
   const { sent } = await signedIn((seen) => {
     if (seen.path === '/api/repos') return reply(200, ['acme/app', 'Acme/Tools', 'acme/web', 'other/tooling'])
-    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred })
+    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred, autoClassifyRepos: [] })
     if (seen.path === '/api/repos/acme/web/star') {
       starred = seen.method === 'PUT' ? ['acme/tools', 'acme/web'] : ['acme/tools']
-      return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred })
+      return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred, autoClassifyRepos: [] })
     }
   })
   await act(async () => {
@@ -503,7 +503,7 @@ it('links the configuration in the repository settings to the GitHub editor on t
 
 it('says in the repository settings when auto-classify misses the key or the model', async () => {
   await signedIn((seen) => {
-    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: '', hasOpenRouterKey: false, starred: [] })
+    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [] })
     if (seen.path === repoSettingsPath) return reply(200, { repo: 'acme/app', autoRefresh: false, autoClassify: true })
   })
   const dialog = await openRepoSettings()
@@ -563,7 +563,7 @@ it('edits the global rules in the settings, starts from the template, and shows 
       if (text.includes('version: 2')) return failure(400, 'The global rules are not valid: version must be 1, not 2')
       stored = text
     }
-    return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], globalRules: stored })
+    return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [], globalRules: stored })
   })
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Settings' })))
   const dialog = screen.getByRole('dialog', { name: 'Settings' })
@@ -639,4 +639,42 @@ it('starts with the kept sidebar width', async () => {
   localStorage.setItem('sheepdog.sidebarWidth', '520')
   await signedIn()
   expect(screen.getByRole('separator', { name: 'Resize the sidebar' }).getAttribute('aria-valuenow')).toBe('520')
+})
+
+it('marks the repositories with auto-classify in the picker, and shows them after the starred ones', async () => {
+  let autoClassifyRepos = ['acme/web', 'acme/tools']
+  const settings = () => ({ repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: ['acme/tools'], autoClassifyRepos })
+  await signedIn((seen) => {
+    if (seen.path === '/api/repos') return reply(200, ['acme/app', 'acme/docs', 'acme/web', 'Acme/Tools'])
+    if (seen.path === '/api/settings') return reply(200, settings())
+    if (seen.path === repoSettingsPath && seen.method === 'GET') return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false })
+    if (seen.path === repoSettingsPath) {
+      autoClassifyRepos = ['acme/app', ...autoClassifyRepos]
+      return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: true })
+    }
+  })
+  async function list() {
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /acme\/app/ }))
+      await settle()
+    })
+    const picker = screen.getByRole('dialog', { name: 'Repositories' })
+    const items = within(picker)
+      .getAllByRole('listitem')
+      .map((item) => {
+        const flag = within(item).queryByRole('img', { name: 'Auto-classify is on' })
+        return `${within(item).getAllByRole('button')[0].textContent}${flag ? ' auto' : ''}`
+      })
+    fireEvent.click(within(picker).getByRole('button', { name: 'acme/app' }))
+    return items
+  }
+  expect(await list()).toEqual(['Acme/Tools auto', 'acme/web auto', 'acme/app', 'acme/docs'])
+
+  const dialog = await openRepoSettings()
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('switch', { name: 'Auto-classify' }))
+    await settle()
+  })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+  expect(await list()).toEqual(['Acme/Tools auto', 'acme/app auto', 'acme/web auto', 'acme/docs'])
 })

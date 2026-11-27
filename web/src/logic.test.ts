@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { checksText, checksTotal, isOutdated, key, laneSections, shownClassification, starredFirst, time } from './logic'
+import { checksText, checksTotal, isOutdated, key, laneSections, pickerOrder, shownClassification, time } from './logic'
 import { laneRow, requests } from './test/rows'
 import { approveAndMergeAction, type CIClassification, type Classification } from './types'
 
 describe('repositories', () => {
-  it('puts the starred repositories first, both parts in the order of the list', () => {
-    const list = ['getsentry/sentry-cocoa', 'GetSentry/Sentry-React-Native', 'acme/app', 'getsentry/sentry-capacitor']
-    expect(starredFirst(list, ['getsentry/sentry-capacitor', 'getsentry/sentry-react-native', 'acme/gone'])).toEqual([
+  it('puts the starred repositories first, then the ones with automation, each part in the order of the list', () => {
+    const list = ['getsentry/sentry-cocoa', 'GetSentry/Sentry-React-Native', 'acme/app', 'getsentry/sentry-capacitor', 'acme/web']
+    expect(pickerOrder(list, ['getsentry/sentry-capacitor', 'getsentry/sentry-react-native', 'acme/gone'], [])).toEqual([
       'GetSentry/Sentry-React-Native',
       'getsentry/sentry-capacitor',
       'getsentry/sentry-cocoa',
       'acme/app',
+      'acme/web',
     ])
-    expect(starredFirst(list, [])).toEqual(list)
+    expect(pickerOrder(list, ['getsentry/sentry-capacitor'], ['acme/web', 'getsentry/sentry-capacitor', 'acme/app'])).toEqual([
+      'getsentry/sentry-capacitor',
+      'acme/app',
+      'acme/web',
+      'getsentry/sentry-cocoa',
+      'GetSentry/Sentry-React-Native',
+    ])
+    expect(pickerOrder(list, [], [])).toEqual(list)
   })
 })
 
