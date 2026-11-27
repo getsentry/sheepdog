@@ -7,6 +7,7 @@ import { currentRepo, hasNoRules, isAutoClassified, isMerging, isSettingUp, isSt
 import type { PullLink, Row, Setup } from './types'
 import {
   Capsule,
+  CheckIcon,
   ExternalLink,
   GaugeIcon,
   GearIcon,
@@ -398,6 +399,8 @@ function RowView({
         ? `Danger ${score}/10. The PR changed after this classification.`
         : `Danger ${score}/10`
   const notes = row.lane?.notes ?? []
+  const review = state.reviews[key(repo, row.number)]
+  const reviewHelp = review?.headSha === row.headSha ? 'Reviewed' : 'Reviewed an older commit'
 
   return (
     <button
@@ -407,14 +410,30 @@ function RowView({
       onClick={onSelect}
       onDoubleClick={() => window.open(row.url, '_blank', 'noopener,noreferrer')}
     >
-      <span className="muted number">#{row.number}</span>
+      <span className="row-lead">
+        <span className="muted number">#{row.number}</span>
+        {(shown || review) && (
+          <span className="row-badges">
+            {shown && (
+              <span className={`score ${dangerTone(score)}${outdated ? ' outdated' : ''}`} title={help}>
+                {score}
+              </span>
+            )}
+            {review && (
+              <span
+                className={review.headSha === row.headSha ? 'reviewed' : 'reviewed outdated'}
+                role="img"
+                aria-label={reviewHelp}
+                title={reviewHelp}
+              >
+                <CheckIcon />
+              </span>
+            )}
+          </span>
+        )}
+      </span>
       <span className="row-main">
         <span className="row-title">
-          {shown && (
-            <span className={`score ${dangerTone(score)}${outdated ? ' outdated' : ''}`} title={help}>
-              {score}
-            </span>
-          )}
           <span>{row.title}</span>
         </span>
         <span className="row-meta">

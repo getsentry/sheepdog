@@ -97,6 +97,14 @@ func TestReviewIsStoredAndSurvivesRestart(t *testing.T) {
 		t.Errorf("stored review %+v", stored)
 	}
 	h.wantError("GET", reviewPath, bob, nil, http.StatusNotFound, "This pull request has no review")
+	var all []store.Review
+	h.json("GET", "/api/repos/GetSentry/Sentry-Cocoa/reviews", alice, nil, http.StatusOK, &all)
+	if len(all) != 1 || all[0].Number != 7 || !all[0].CreatedAt.Equal(stored.CreatedAt) {
+		t.Errorf("reviews of alice %+v", all)
+	}
+	if status, body := h.do("GET", "/api/repos/getsentry/sentry-cocoa/reviews", bob, nil); status != http.StatusOK || strings.TrimSpace(string(body)) != "[]" {
+		t.Errorf("reviews of bob = %d %s", status, body)
+	}
 
 	h.close()
 	restarted := newHarnessAt(t, h.dbPath, defaultAllowed, nil)

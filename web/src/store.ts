@@ -99,6 +99,7 @@ export type Action =
       previousError: string | undefined
     }
   | { type: 'classificationsLoaded'; list: Classification[] }
+  | { type: 'reviewsLoaded'; list: Review[] }
   | { type: 'classificationError'; key: string; error: string | null }
 
 export const initialState: State = {
@@ -279,6 +280,14 @@ function update(state: State, action: Action): State {
     }
     case 'classificationError':
       return { ...state, classificationErrors: withError(state.classificationErrors, action.key, action.error) }
+    case 'reviewsLoaded': {
+      const reviews = { ...state.reviews }
+      for (const r of action.list) {
+        const k = key(r.repo, r.number)
+        if (newer(r, reviews[k])) reviews[k] = r
+      }
+      return { ...state, reviews }
+    }
   }
 }
 
@@ -316,8 +325,8 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
   let state = initialState
   const listeners = new Set<() => void>()
   let stream: { close(): void } | null = null
-  // The repository whose stored classifications were loaded for the list. null after a reconnect, so the next requests event loads them again.
-  let classificationsRepo: string | null = null
+  // The repository whose stored reviews and classifications were loaded for the list. null after a reconnect, so the next requests event loads them again.
+  let listsRepo: string | null = null
   let tasksVersion = 0
   // The generation of a running load of the repositories.
   let loadingRepositories: number | null = null
@@ -341,7 +350,7 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
   function endSession(text: string | null) {
     stream?.close()
     stream = null
-    classificationsRepo = null
+    listsRepo = null
     dispatch({ type: 'signedOut', message: text })
   }
 
@@ -382,7 +391,7 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
         connected() {
           if (!current()) return
           set({ connectionError: null })
-          classificationsRepo = null
+          listsRepo = null
           if (state.repositoriesError !== null) void actions.loadRepositories()
           // The server does not send again the review and classification events that the client missed while the stream was down.
           const repo = currentRepo(state)
@@ -395,11 +404,12 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
           if (!current()) return
           if (event.type === 'tasks') tasksVersion += 1
           dispatch({ type: 'event', event })
-          // The server refuses the classifications of a repository without rules.
+          // The server refuses the reviews and classifications of a repository without rules.
           const repo = event.type === 'requests' && !hasNoRules(event.data) ? event.data.repo : ''
-          if (repo && repo.toLowerCase() !== classificationsRepo) {
-            classificationsRepo = repo.toLowerCase()
+          if (repo && repo.toLowerCase() !== listsRepo) {
+            listsRepo = repo.toLowerCase()
             void actions.loadClassifications(repo)
+            void actions.loadReviews(repo)
           }
         },
         disconnected(text) {
@@ -687,8 +697,20 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
         dispatch({ type: 'classificationsLoaded', list })
       } catch (error) {
         if (error instanceof Cancelled) return
-        classificationsRepo = null
+        listsRepo = null
         // A 409 comes for a repository without rules, before the poll shows the setup.
+        if (!(error instanceof ApiError && error.status === 409)) set({ error: message(error) })
+      }
+    },
+
+    // The list marks the reviewed PRs, so it needs the stored reviews of the repository before a PR opens.
+    async loadReviews(repo: string) {
+      try {
+        const list = await checked((client) => client.reviews(repo))
+        dispatch({ type: 'reviewsLoaded', list })
+      } catch (error) {
+        if (error instanceof Cancelled) return
+        listsRepo = null
         if (!(error instanceof ApiError && error.status === 409)) set({ error: message(error) })
       }
     },

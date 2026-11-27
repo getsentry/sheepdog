@@ -556,6 +556,19 @@ func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.
 	writeJSON(w, http.StatusAccepted, task)
 }
 
+func (s *Server) listReviews(w http.ResponseWriter, r *http.Request, user store.User) {
+	repo, ok := repoPath(w, r)
+	if !ok || !s.requireRules(w, r, user, repo) {
+		return
+	}
+	list, err := s.store.LatestReviews(r.Context(), user.ID, repo)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
 func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, ok := repoPath(w, r)
 	if !ok || !s.requireRules(w, r, user, repo) {

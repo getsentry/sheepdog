@@ -341,6 +341,7 @@ A review or a classification sends at most 200,000 characters of the diff. For a
 | `GET /api/repos/{owner}/{name}/pulls/{number}/diff` | The unified diff of a PR as `{"diff", "truncated"}`. A diff larger than 2 MB ends after its last full line before 2 MB, and then `truncated` is `true`. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/review` | The latest stored AI review of the PR, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/review` | Start an AI review. Returns the task, or 409 if a review of the PR is already running. |
+| `GET /api/repos/{owner}/{name}/reviews` | The latest stored AI review of each PR of the repository, ordered by PR number. An empty list when there is none. The web app marks the reviewed PRs in the list with it. |
 | `GET /api/repos/{owner}/{name}/classifications` | The latest stored classification of each PR of the repository, ordered by PR number. An empty list when there is none. |
 | `GET /api/repos/{owner}/{name}/pulls/{number}/classification` | The latest stored classification of the PR, with a `score` from 1 (no danger, can be merged) to 10 (extreme danger) and a `reason`, or 404. |
 | `POST /api/repos/{owner}/{name}/pulls/{number}/classification` | Start a classification. Returns the task, or 409 if a classification of the PR is already running. A review and a classification of one PR can run at the same time. |

@@ -171,6 +171,7 @@ func TestRoutesRefuseRepositoryWithoutRules(t *testing.T) {
 		{"GET", "/api/repos/getsentry/no-rules/pulls/101/classification"},
 		{"POST", "/api/repos/getsentry/no-rules/pulls/101/classification"},
 		{"GET", "/api/repos/GetSentry/No-Rules/classifications"},
+		{"GET", "/api/repos/getsentry/no-rules/reviews"},
 		{"POST", "/api/repos/getsentry/no-rules/pulls/101/approve-and-merge"},
 	} {
 		h.wantError(route[0], route[1], alice, map[string]string{"headSha": "sha-1"}, http.StatusConflict, noRulesText)

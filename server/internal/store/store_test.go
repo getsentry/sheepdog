@@ -829,3 +829,33 @@ func TestAutoClassifyRepos(t *testing.T) {
 		t.Errorf("bob repositories %v", list)
 	}
 }
+
+func TestLatestReviewsOfRepository(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	bob, _ := s.UpsertUser(ctx, 2, "bob", "ghp_b")
+	add := func(user int64, repo string, number int, risk string) {
+		t.Helper()
+		r := Review{Repo: repo, Number: number, HeadSHA: "sha-" + risk, Review: review.Review{Risk: risk, Summary: "s", Findings: []review.Finding{}}}
+		if err := s.AddReview(ctx, user, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(alice, "acme/app", 9, "green")
+	add(alice, "acme/app", 3, "red")
+	add(alice, "acme/app", 9, "yellow")
+	add(alice, "acme/other", 3, "green")
+	add(bob, "acme/app", 4, "red")
+
+	list, err := s.LatestReviews(ctx, alice, "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Number != 3 || list[0].Risk != "red" || list[1].Number != 9 || list[1].Risk != "yellow" || list[1].HeadSHA != "sha-yellow" {
+		t.Errorf("reviews %+v", list)
+	}
+	if list, _ := s.LatestReviews(ctx, bob, "acme/other"); list == nil || len(list) != 0 {
+		t.Errorf("bob sees %+v, want an empty list", list)
+	}
+}

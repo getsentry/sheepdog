@@ -442,17 +442,15 @@ func (s *Store) AddReview(ctx context.Context, userID int64, r *Review) error {
 	return nil
 }
 
-func (s *Store) LatestReview(ctx context.Context, userID int64, repo string, number int) (Review, error) {
+const reviewColumns = `repo, number, head_sha, model, risk, summary, findings_json, diff_truncated, pr_updated_at, created_at`
+
+func scanReview(row interface{ Scan(...any) error }) (Review, error) {
 	var (
 		r                     Review
 		findings, prUpdatedAt string
 		createdAt             int64
 	)
-	err := s.db.QueryRowContext(ctx, `
-		SELECT repo, number, head_sha, model, risk, summary, findings_json, diff_truncated, pr_updated_at, created_at
-		FROM reviews WHERE user_id = ? AND repo = ? AND number = ?
-		ORDER BY created_at DESC, rowid DESC LIMIT 1`, userID, repo, number,
-	).Scan(&r.Repo, &r.Number, &r.HeadSHA, &r.Model, &r.Risk, &r.Summary, &findings, &r.DiffTruncated, &prUpdatedAt, &createdAt)
+	err := row.Scan(&r.Repo, &r.Number, &r.HeadSHA, &r.Model, &r.Risk, &r.Summary, &findings, &r.DiffTruncated, &prUpdatedAt, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Review{}, ErrNotFound
 	}
@@ -467,6 +465,35 @@ func (s *Store) LatestReview(ctx context.Context, userID int64, repo string, num
 	}
 	r.CreatedAt = time.UnixMilli(createdAt)
 	return r, nil
+}
+
+func (s *Store) LatestReview(ctx context.Context, userID int64, repo string, number int) (Review, error) {
+	return scanReview(s.db.QueryRowContext(ctx, `
+		SELECT `+reviewColumns+`
+		FROM reviews WHERE user_id = ? AND repo = ? AND number = ?
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, userID, repo, number))
+}
+
+// LatestReviews returns the latest review of each PR of the repository, ordered by PR number.
+func (s *Store) LatestReviews(ctx context.Context, userID int64, repo string) ([]Review, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+reviewColumns+` FROM (
+			SELECT *, ROW_NUMBER() OVER (PARTITION BY number ORDER BY created_at DESC, rowid DESC) AS position
+			FROM reviews WHERE user_id = ? AND repo = ?
+		) WHERE position = 1 ORDER BY number`, userID, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []Review{}
+	for rows.Next() {
+		r, err := scanReview(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, rows.Err()
 }
 
 // Classification is a finished danger score of one pull request.

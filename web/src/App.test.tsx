@@ -92,6 +92,7 @@ async function signedIn(handler: (seen: Seen) => ReturnType<Parameters<typeof fa
       case 'GET /api/models':
         return reply(200, ['a/model', 'b/model'])
       case 'GET /api/repos/acme/app/classifications':
+      case 'GET /api/repos/acme/app/reviews':
         return reply(200, [])
       case 'GET /api/repos/acme/app/pulls/2':
         return reply(200, pullRequest)
@@ -549,7 +550,7 @@ it('shows a failed load of the repository settings', async () => {
 
 it('shows the list with a short warning for a repository with the global rules', async () => {
   const { sources, sent } = await signedIn((seen) => {
-    if (seen.path === '/api/repos/acme/new/classifications') return reply(200, [])
+    if (seen.path === '/api/repos/acme/new/classifications' || seen.path === '/api/repos/acme/new/reviews') return reply(200, [])
     if (seen.path === '/api/repos/acme/new/pulls/2') return reply(200, pullRequest)
   })
   const global = (setup: Setup): Requests => ({
@@ -866,4 +867,42 @@ it('jumps from a finding in the review to its place in the diff, and opens a col
   const json = within(screen.getByRole('region', { name: 'Changes' })).getByRole('region', { name: 'package.json' })
   const newVersion = within(json).getByText('New version').closest('.finding')
   expect(scrolledTo.slice(1)).toEqual([newVersion, newVersion])
+})
+
+it('shows the score and a check for a review below the PR number in the list', async () => {
+  const stored = (number: number, headSha: string) => ({
+    repo: 'acme/app',
+    number,
+    headSha,
+    model: 'm',
+    risk: 'green',
+    summary: 's',
+    findings: [],
+    diffTruncated: false,
+    prUpdatedAt: '2027-01-15T08:00:00Z',
+    createdAt: '2027-01-15T09:00:00Z',
+  })
+  const { sources } = await signedIn((seen) => {
+    if (seen.path === '/api/repos/acme/app/reviews') return reply(200, [stored(2, 'sha2'), stored(4, 'sha-old')])
+  })
+  await emit(sources, { ...requests(rows, ['safe', 'docs']), fetchedAt: '2027-01-15T08:00:00Z' })
+  const item = (number: number) => screen.getByText(`PR ${number}`).closest('button')!
+  const lead = (number: number) => item(number).querySelector('.row-lead')!
+
+  expect(lead(2).firstElementChild?.textContent).toBe('#2')
+  expect(within(lead(2) as HTMLElement).getByTitle('Danger 1/10 from CI').textContent).toBe('1')
+  expect(within(lead(2) as HTMLElement).getByRole('img', { name: 'Reviewed' }).className).toBe('reviewed')
+  expect(item(2).querySelector('.row-title')?.textContent).toBe('PR 2')
+
+  expect(lead(3).textContent).toBe('#3')
+  expect(lead(3).querySelector('.row-badges')).toBeNull()
+
+  expect(within(lead(4) as HTMLElement).getByRole('img', { name: 'Reviewed an older commit' }).className).toBe('reviewed outdated')
+  expect(lead(4).querySelector('.score')).toBeNull()
+
+  await act(async () => {
+    sources.last().emit('review', { repo: 'acme/app', number: 3, review: stored(3, 'sha3') })
+    await settle()
+  })
+  expect(within(lead(3) as HTMLElement).getByRole('img', { name: 'Reviewed' })).toBeTruthy()
 })

@@ -492,6 +492,30 @@ a {
   background: var(--bg-selected);
 }
 
+.row-lead {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  flex: none;
+  min-width: 44px;
+}
+
+.row-badges {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.reviewed {
+  display: inline-flex;
+  color: var(--green);
+}
+
+.reviewed.outdated {
+  opacity: 0.45;
+}
+
 .row-main {
   display: flex;
   flex-direction: column;

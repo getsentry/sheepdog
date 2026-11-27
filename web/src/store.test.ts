@@ -61,6 +61,7 @@ async function signedIn(handler: (seen: Seen) => Reply | undefined | Promise<Rep
       case 'PUT /api/settings':
         return reply(200, settings)
       case 'GET /api/repos/acme/app/classifications':
+      case 'GET /api/repos/acme/app/reviews':
         return reply(200, [])
     }
     return seen.method === 'DELETE' ? reply(204) : failure(404, 'Not found')
@@ -551,9 +552,11 @@ describe('store', () => {
     expect(s.state().error).toBeNull()
   })
 
-  it('loads no classifications for a repository without rules, and hides the 409 that comes before the setup', async () => {
+  it('loads no reviews and classifications for a repository without rules, and hides the 409 that comes before the setup', async () => {
     const gated = 'acme/new has no .github/sheepdog.yml on main. Set it up first'
-    const s = await signedIn(({ path }) => (path === '/api/repos/acme/new/classifications' ? failure(409, gated) : undefined))
+    const s = await signedIn(({ path }) =>
+      path === '/api/repos/acme/new/classifications' || path === '/api/repos/acme/new/reviews' ? failure(409, gated) : undefined,
+    )
     s.connect()
     s.actions.select(1)
     const setup = { defaultBranch: 'main', pullRequest: null }
@@ -566,12 +569,31 @@ describe('store', () => {
     s.sources.last().emit('requests', { ...requests([], [], 'acme/new'), setup })
     await settle()
     expect(s.paths('/api/repos/acme/new/classifications')).toHaveLength(1)
+    expect(s.paths('/api/repos/acme/new/reviews')).toHaveLength(1)
     expect(s.state().error).toBeNull()
 
     // The merged setup PR gives a result without setup, so the classifications load again.
     s.sources.last().emit('requests', requests([], [], 'acme/new'))
     await settle()
     expect(s.paths('/api/repos/acme/new/classifications')).toHaveLength(2)
+    expect(s.paths('/api/repos/acme/new/reviews')).toHaveLength(2)
+  })
+
+  it('loads the stored reviews of the repository for the list, and keeps a newer review', async () => {
+    const s = await signedIn(({ path }) =>
+      path === '/api/repos/acme/app/reviews'
+        ? reply(200, [review('Stored one', '2026-11-16T10:00:00Z', 'acme/app', 1), review('Stored two', '2026-11-16T10:00:00Z', 'acme/app', 2)])
+        : undefined,
+    )
+    s.sources.last().emit('review', { repo: 'acme/app', number: 2, review: review('From an event', '2026-11-16T11:00:00Z', 'acme/app', 2) })
+    s.connect()
+    await settle()
+    expect(s.paths('/api/repos/acme/app/reviews')).toHaveLength(1)
+    expect(s.state().reviews[key('acme/app', 1)]?.summary).toBe('Stored one')
+    expect(s.state().reviews[key('acme/app', 2)]?.summary).toBe('From an event')
+    await s.reconnect()
+    await settle()
+    expect(s.paths('/api/repos/acme/app/reviews')).toHaveLength(2)
   })
 
   it('sends one setup at a time, and drops the setup result of an old session', async () => {

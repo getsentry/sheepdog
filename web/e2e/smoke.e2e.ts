@@ -276,6 +276,9 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
         })
       case `GET /api/repos/${sample}/classifications`:
         return json(route, 200, [stored])
+      case `GET /api/repos/${sample}/reviews`:
+        return json(route, 200, [review])
+      case `GET /api/repos/${bare}/reviews`:
       case `GET /api/repos/${bare}/classifications`:
         return globalRules
           ? json(route, 200, [])
@@ -318,6 +321,11 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   const safe = page.getByRole('region', { name: 'safe' })
   await expect(safe.getByRole('heading')).toContainText('Approve and merge (1)')
   await expect(page.getByRole('region', { name: 'manual' }).getByTitle(/changed after this classification/)).toHaveText('6')
+  // The score and the check of the stored review are below the PR number.
+  const expoRow = safe.getByRole('button', { name: /Bump expo/ })
+  await expect(expoRow.locator('.row-lead')).toContainText('#2')
+  await expect(expoRow.locator('.row-badges').getByTitle('Danger 1/10 from CI')).toHaveText('1')
+  await expect(expoRow.locator('.row-badges').getByRole('img', { name: 'Reviewed' })).toBeVisible()
   await safe.getByText('Bump expo from 57.0.1 to 57.2.0').click()
   await expect(page).toHaveTitle('Bump expo from 57.0.1 to 57.2.0')
   await expect(page.getByRole('region', { name: 'Review' })).toContainText('Low risk')

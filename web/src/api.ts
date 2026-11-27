@@ -107,6 +107,7 @@ export function createApiClient(fetcher: typeof fetch = (input, init) => fetch(i
     review: (repo: string, number: number) => orNull<Review>(`${pull(repo, number)}/review`),
     startReview: (repo: string, number: number) => json<RunningTask>('POST', `${pull(repo, number)}/review`),
     classifications: (repo: string) => json<Classification[]>('GET', `/api/repos/${repo}/classifications`),
+    reviews: (repo: string) => json<Review[]>('GET', `/api/repos/${repo}/reviews`),
     classification: (repo: string, number: number) => orNull<Classification>(`${pull(repo, number)}/classification`),
     startClassification: (repo: string, number: number) =>
       json<RunningTask>('POST', `${pull(repo, number)}/classification`),
