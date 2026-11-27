@@ -149,6 +149,8 @@ classification:
   model: anthropic/claude-sonnet-4.5
   ci: true
   comment: true
+review:
+  model: anthropic/claude-opus-4.5
 ```
 
 - `version` must be `1`. The server rejects unknown keys.
@@ -167,6 +169,8 @@ classification:
 - `classification.model` is the OpenRouter model for every classification of the repository. A click on "Classify" in the web app uses this model instead of the model of the user, and the stored classification names this model. If the rules file is missing or not valid, the server uses the model of the user.
 - `classification.ci: true` tells the server to read the score of the Sheepdog workflow for each PR. See [Classification in CI](#classification-in-ci).
 - `classification.comment: true` tells the Sheepdog workflow to post the score as a comment on the PR. The default is `false`. See [Comment on the PR](#comment-on-the-pr).
+- `review` is optional. If you set it, `model` is required.
+- `review.model` is the OpenRouter model for every AI review of the repository, read from the base branch of the PR. A click on "Review" uses this model instead of the model of the user, and the stored review names this model. Without `review.model`, a review uses the model of the user, also when `classification.model` is set. So a repository can use a cheap model for the many classifications and a strong model for the few reviews.
 
 Each row has notes that explain its lane. For a PR in an `approve-and-automerge` lane, the notes list the conditions that matched. For every other PR, the notes list the conditions that failed in the closest `approve-and-automerge` lane, for example `Needs a classification of the current commit`.
 
@@ -209,7 +213,7 @@ The server never commits to the default branch, because rulesets in many reposit
 
 Each user can set global rules in Settings of the web app, or with `PUT /api/settings` and `{"globalRules": "<text>"}`. They have the same form as `.github/sheepdog.yml`, and the server checks them before it stores them. The server keeps them in its database, not on GitHub.
 
-For a repository without `.github/sheepdog.yml` on the default branch, the server uses the global rules of the user for all PRs, on every base branch. The PR routes and approve and merge then work as with a rules file. `classification.model` of the global rules replaces the model of the user for these classifications. The `requests` result has `"globalRules": true`, and still has `setup`, so that the web app shows a short warning and can open a setup PR. A rules file on the default branch always wins over the global rules. Other users of the repository use their own global rules.
+For a repository without `.github/sheepdog.yml` on the default branch, the server uses the global rules of the user for all PRs, on every base branch. The PR routes and approve and merge then work as with a rules file. `classification.model` and `review.model` of the global rules replace the model of the user for these classifications and reviews. The `requests` result has `"globalRules": true`, and still has `setup`, so that the web app shows a short warning and can open a setup PR. A rules file on the default branch always wins over the global rules. Other users of the repository use their own global rules.
 
 The global rules can approve and merge PRs in repositories whose team did not agree to any rules. "Approve and merge" still needs a click and uses the GitHub account of the user.
 

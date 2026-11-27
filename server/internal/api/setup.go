@@ -40,11 +40,14 @@ func rulesTemplate(model string, global bool) string {
 		quoted, _ := json.Marshal(model)
 		classification = "# The OpenRouter model for every classification of " + scope + ".\nclassification:\n  model: " + string(quoted) + "\n" + ci
 	}
+	review := "# The OpenRouter model for every AI review of " + scope + ". Without it, each user reviews with the own model.\n" +
+		"# review:\n#   model: anthropic/claude-opus-4.5\n"
 	return header + `# A pull request goes to the first lane whose conditions all match. Every other pull request needs a manual review.
 # See ` + docsURL + `#review-lanes
 version: 1
 
 ` + classification + `
+` + review + `
 lanes:
   # Small Dependabot updates without a major version change, with green checks and a classification score of at most 2.
   safe:

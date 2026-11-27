@@ -8,6 +8,7 @@ import (
 	"sheepdog/internal/github"
 	"sheepdog/internal/openrouter"
 	"sheepdog/internal/review"
+	"sheepdog/internal/rules"
 	"sheepdog/internal/store"
 )
 
@@ -68,7 +69,11 @@ func (w ReviewWork) review(ctx context.Context) (store.Review, error) {
 	if err != nil {
 		return store.Review{}, err
 	}
-	result, truncated, err := review.Request(ctx, w.OpenRouter, w.Model, input)
+	model, err := rulesModel(ctx, w.GitHub, w.Repo, detail.BaseRefName, w.Model, func(r rules.Rules) string { return r.Review.Model })
+	if err != nil {
+		return store.Review{}, err
+	}
+	result, truncated, err := review.Request(ctx, w.OpenRouter, model, input)
 	if err != nil {
 		return store.Review{}, err
 	}
@@ -76,7 +81,7 @@ func (w ReviewWork) review(ctx context.Context) (store.Review, error) {
 		Repo:          w.Repo,
 		Number:        w.Number,
 		HeadSHA:       detail.HeadRefOid,
-		Model:         w.Model,
+		Model:         model,
 		Review:        result,
 		DiffTruncated: truncated,
 		PRUpdatedAt:   detail.UpdatedAt,

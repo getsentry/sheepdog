@@ -65,7 +65,7 @@ func (w ClassifyWork) classify(ctx context.Context) (store.Classification, error
 	if err != nil {
 		return store.Classification{}, err
 	}
-	model, err := w.model(ctx, detail.BaseRefName)
+	model, err := rulesModel(ctx, w.GitHub, w.Repo, detail.BaseRefName, w.Model, func(r rules.Rules) string { return r.Classification.Model })
 	if err != nil {
 		return store.Classification{}, err
 	}
@@ -88,16 +88,16 @@ func (w ClassifyWork) classify(ctx context.Context) (store.Classification, error
 	return stored, nil
 }
 
-// model returns classification.model of the rules on the base branch, so that every user gets a score from the same model.
-// A missing or invalid rules file keeps the model of the user.
-func (w ClassifyWork) model(ctx context.Context, base string) (string, error) {
-	text, err := w.GitHub.RulesFile(ctx, w.Repo, base)
+// rulesModel returns the model that pick reads from the rules on the base branch, so that every user gets a result from the same model.
+// A missing or invalid rules file, or a rules file without that model, keeps fallback.
+func rulesModel(ctx context.Context, gh *github.Client, repo, base, fallback string, pick func(rules.Rules) string) (string, error) {
+	text, err := gh.RulesFile(ctx, repo, base)
 	if err != nil || text == nil {
-		return w.Model, err
+		return fallback, err
 	}
 	parsed, err := rules.Parse([]byte(*text))
-	if err != nil || parsed.Classification.Model == "" {
-		return w.Model, nil
+	if err != nil || pick(parsed) == "" {
+		return fallback, nil
 	}
-	return parsed.Classification.Model, nil
+	return pick(parsed), nil
 }

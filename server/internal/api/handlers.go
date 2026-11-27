@@ -522,12 +522,21 @@ func (s *Server) getReview(w http.ResponseWriter, r *http.Request, user store.Us
 
 func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.User) {
 	repo, number, ok := pullPath(w, r)
-	if !ok || !s.requireRules(w, r, user, repo) {
+	if !ok {
+		return
+	}
+	global, ok := s.repoRules(w, r, user, repo)
+	if !ok {
 		return
 	}
 	if user.OpenRouterKey == "" || user.Model == "" {
 		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
 		return
+	}
+	// For a repository with the global rules, review.model of the global rules replaces the model of the user.
+	model := user.Model
+	if global != nil && global.Review.Model != "" {
+		model = global.Review.Model
 	}
 	task, err := s.tasks.Start(user.ID, tasks.ReviewWork{
 		Store:      s.store,
@@ -535,7 +544,7 @@ func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.
 		OpenRouter: openrouter.New(s.cfg.OpenRouterURL, user.OpenRouterKey),
 		UserID:     user.ID,
 		Login:      user.Login,
-		Model:      user.Model,
+		Model:      model,
 		Repo:       repo,
 		Number:     number,
 		Publish:    func(e tasks.ReviewEvent) { s.hub.publish(user.ID, "review", e) },

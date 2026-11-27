@@ -86,6 +86,30 @@ func TestParseClassification(t *testing.T) {
 	}
 }
 
+func TestParseReview(t *testing.T) {
+	cases := map[string]Rules{
+		"version: 1\n":                            {},
+		"version: 1\nreview:\n":                   {},
+		"version: 1\nreview:\n  model: r/model\n": {Review: ReviewRule{Model: "r/model"}},
+		"version: 1\nreview: {model: r/m}\nclassification: {model: c/m}\n": {Review: ReviewRule{Model: "r/m"}, Classification: ClassificationRule{Model: "c/m"}},
+	}
+	for data, want := range cases {
+		rules, err := Parse([]byte(data))
+		if err != nil || rules.Review != want.Review || rules.Classification != want.Classification {
+			t.Errorf("%q: got %+v, %v, want %+v", data, rules, err, want)
+		}
+	}
+	for data, message := range map[string]string{
+		"version: 1\nreview:\n  model: ''\n":        "review.model must not be empty",
+		"version: 1\nreview:\n  ci: true\n":         "field ci not found",
+		"version: 1\nreview:\n  model: a\n  x: 1\n": "field x not found",
+	} {
+		if _, err := Parse([]byte(data)); err == nil || !strings.Contains(err.Error(), message) {
+			t.Errorf("%q: got %v, want %q", data, err, message)
+		}
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	cases := []struct {
 		name, data, want string

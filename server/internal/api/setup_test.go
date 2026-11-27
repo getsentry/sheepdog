@@ -237,6 +237,11 @@ func TestSetupTemplate(t *testing.T) {
 			t.Errorf("the template does not explain the CI workflow:\n%s", template.Content)
 		}
 	}
+	for _, global := range []bool{false, true} {
+		if template := rulesTemplate("a/model", global); !strings.Contains(template, "\n# review:\n#   model: ") {
+			t.Errorf("the template has no review model comment:\n%s", template)
+		}
+	}
 	if !strings.Contains(rulesTemplate("", false), "# classification:\n#   model: ") {
 		t.Errorf("the template without a model has no placeholder:\n%s", rulesTemplate("", false))
 	}

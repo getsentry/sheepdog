@@ -313,3 +313,65 @@ func TestRepositoryModelOverridesUserModel(t *testing.T) {
 		t.Errorf("classification with invalid rules: %+v", c)
 	}
 }
+
+func TestReviewAndClassificationUseTheirOwnModels(t *testing.T) {
+	h := newHarness(t, nil)
+	alice := h.signIn(aliceToken)
+	h.settings(alice, map[string]string{"openRouterKey": aliceKey, "model": "alice/model"})
+	events := h.events(alice)
+	var list []tasks.Task
+	events.expect("tasks", &list)
+	run := func(path, kind string) string {
+		t.Helper()
+		h.json("POST", path, alice, nil, http.StatusAccepted, nil)
+		events.expect("tasks", &list)
+		if kind == "review" {
+			var done tasks.ReviewEvent
+			events.expect("review", &done)
+			events.expect("tasks", &list)
+			if done.Review == nil {
+				t.Fatalf("review failed: %s", done.Error)
+			}
+			return done.Review.Model
+		}
+		var done tasks.ClassificationEvent
+		events.expect("classification", &done)
+		events.expect("tasks", &list)
+		if done.Classification == nil {
+			t.Fatalf("classification failed: %s", done.Error)
+		}
+		return done.Classification.Model
+	}
+	sent := func() string {
+		t.Helper()
+		var body struct{ Model string }
+		json.Unmarshal([]byte(h.openrouter.lastBody()), &body)
+		return body.Model
+	}
+
+	h.github.setRules("getsentry/sentry-cocoa@main", "version: 1\nreview:\n  model: review/model\nclassification:\n  model: classify/model\n")
+	if model := run(reviewPath, "review"); model != "review/model" || sent() != "review/model" {
+		t.Errorf("review with review.model: stored %q, sent %q", model, sent())
+	}
+	if model := run(classificationPath, "classify"); model != "classify/model" || sent() != "classify/model" {
+		t.Errorf("classification with classification.model: stored %q, sent %q", model, sent())
+	}
+
+	h.github.setRules("getsentry/sentry-cocoa@main", "version: 1\nclassification:\n  model: classify/model\n")
+	if model := run(reviewPath, "review"); model != "alice/model" || sent() != "alice/model" {
+		t.Errorf("review without review.model: stored %q, sent %q", model, sent())
+	}
+
+	// The check of the default branch lives 30 seconds, so the test ends it after the removal of the file.
+	h.github.removeRules("getsentry/sentry-cocoa@main")
+	h.server.mu.Lock()
+	clear(h.server.rulesChecks)
+	h.server.mu.Unlock()
+	h.json("PUT", "/api/settings", alice, map[string]string{"globalRules": "version: 1\nreview:\n  model: global/review\n"}, http.StatusOK, nil)
+	if model := run(reviewPath, "review"); model != "global/review" || sent() != "global/review" {
+		t.Errorf("review with global review.model: stored %q, sent %q", model, sent())
+	}
+	if model := run(classificationPath, "classify"); model != "alice/model" {
+		t.Errorf("classification with global rules without classification.model: stored %q", model)
+	}
+}
