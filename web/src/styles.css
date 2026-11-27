@@ -981,6 +981,17 @@ dialog::backdrop {
   flex: 1;
 }
 
+.setting-help {
+  grid-column: 2;
+  margin-top: -6px;
+  font-size: 12px;
+}
+
+.setting-help code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
 /* Diff */
 
 .changes {

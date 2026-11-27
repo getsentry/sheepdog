@@ -169,6 +169,7 @@ review:
 - `classification.model` is the OpenRouter model for every classification of the repository. A click on "Classify" in the web app uses this model instead of the model of the user, and the stored classification names this model. If the rules file is missing or not valid, the server uses the model of the user.
 - `classification.ci: true` tells the server to read the score of the Sheepdog workflow for each PR. See [Classification in CI](#classification-in-ci).
 - `classification.comment: true` tells the Sheepdog workflow to post the score as a comment on the PR. The default is `false`. See [Comment on the PR](#comment-on-the-pr).
+- The model of the user is the "Default model" in Settings of the web app. Sheepdog uses it for a classification or a review when the rules set no `classification.model` or `review.model`. A classification or a review needs it and the OpenRouter key of the user also when the rules set a model.
 - `review` is optional. If you set it, `model` is required.
 - `review.model` is the OpenRouter model for every AI review of the repository, read from the base branch of the PR. A click on "Review" uses this model instead of the model of the user, and the stored review names this model. Without `review.model`, a review uses the model of the user, also when `classification.model` is set. So a repository can use a cheap model for the many classifications and a strong model for the few reviews.
 

@@ -177,7 +177,7 @@ func TestReviewCancelConflictAndShutdown(t *testing.T) {
 func TestReviewNeedsKeyAndModel(t *testing.T) {
 	h := newHarness(t, nil)
 	alice := h.signIn(aliceToken)
-	const message = "Set the OpenRouter API key and the classification model in Settings"
+	const message = "Set the OpenRouter API key and the default model in Settings"
 	h.wantError("POST", reviewPath, alice, nil, http.StatusBadRequest, message)
 	h.settings(alice, map[string]string{"openRouterKey": aliceKey})
 	h.wantError("POST", reviewPath, alice, nil, http.StatusBadRequest, message)
@@ -226,7 +226,7 @@ const classificationPath = "/api/repos/getsentry/sentry-cocoa/pulls/7/classifica
 func TestClassificationIsStoredAndSeparateFromReview(t *testing.T) {
 	h := newHarness(t, nil)
 	alice, bob := h.signIn(aliceToken), h.signIn(bobToken)
-	h.wantError("POST", classificationPath, alice, nil, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
+	h.wantError("POST", classificationPath, alice, nil, http.StatusBadRequest, "Set the OpenRouter API key and the default model in Settings")
 	h.settings(alice, map[string]string{"openRouterKey": aliceKey, "model": "alice/model"})
 	h.wantError("GET", classificationPath, alice, nil, http.StatusNotFound, "This pull request has no classification")
 	events := h.events(alice)

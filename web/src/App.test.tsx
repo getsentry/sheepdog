@@ -204,7 +204,12 @@ it('picks a model in the settings and signs out', async () => {
   const settings = screen.getByRole('dialog', { name: 'Settings' })
   expect(within(settings).getByLabelText<HTMLInputElement>('OpenRouter API key').placeholder).toBe('Saved on the server')
   await act(async () => {
-    fireEvent.click(within(settings).getByRole('button', { name: /a\/model/ }))
+    const modelButton = within(settings).getByRole('button', { name: /a\/model/ })
+    expect(within(settings).getByText('Default model')).toBeTruthy()
+    expect(document.getElementById(modelButton.getAttribute('aria-describedby')!)?.textContent).toContain(
+      'Sheepdog uses this model for classifications and reviews when .github/sheepdog.yml of the repository',
+    )
+    fireEvent.click(modelButton)
     await settle()
   })
   const models = screen.getByRole('dialog', { name: 'Models' })
@@ -543,7 +548,7 @@ it('says in the repository settings when auto-classify misses the key or the mod
   })
   const dialog = await openRepoSettings()
   expect(within(dialog).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' }).checked).toBe(false)
-  expect(within(dialog).getByText('Auto-classify needs an OpenRouter API key and a model in Settings.')).toBeTruthy()
+  expect(within(dialog).getByText('Auto-classify needs an OpenRouter API key and a default model in Settings.')).toBeTruthy()
 })
 
 it('shows a failed load of the repository settings', async () => {
@@ -962,6 +967,6 @@ it('says in the repository settings when auto-review misses the key or the model
   })
   const dialog = await openRepoSettings()
   expect(within(dialog).getByRole<HTMLInputElement>('switch', { name: 'Auto-review' }).checked).toBe(true)
-  expect(within(dialog).getByText('Auto-review needs an OpenRouter API key and a model in Settings.')).toBeTruthy()
+  expect(within(dialog).getByText('Auto-review needs an OpenRouter API key and a default model in Settings.')).toBeTruthy()
   expect(within(dialog).queryByText(/Auto-classify needs/)).toBeNull()
 })

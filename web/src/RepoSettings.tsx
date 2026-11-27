@@ -68,7 +68,7 @@ export function RepoSettings({ repo, onClose }: { repo: string; onClose: () => v
               tokens, and you pay for them.
             </p>
             {current.autoClassify && missingModel && (
-              <p className="error">Auto-classify needs an OpenRouter API key and a model in Settings.</p>
+              <p className="error">Auto-classify needs an OpenRouter API key and a default model in Settings.</p>
             )}
           </section>
           <section aria-label="Review">
@@ -83,7 +83,7 @@ export function RepoSettings({ repo, onClose }: { repo: string; onClose: () => v
               Each review sends the diff to OpenRouter with your API key. It uses tokens, and you pay for them.
             </p>
             {current.autoReview && missingModel && (
-              <p className="error">Auto-review needs an OpenRouter API key and a model in Settings.</p>
+              <p className="error">Auto-review needs an OpenRouter API key and a default model in Settings.</p>
             )}
           </section>
         </>

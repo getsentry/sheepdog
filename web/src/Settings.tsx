@@ -57,12 +57,22 @@ export function Settings({ onClose }: { onClose: () => void }) {
         </div>
       </form>
       <div className="setting">
-        <span>Classification model</span>
+        <span>Default model</span>
         <div className="setting-value">
-          <button type="button" disabled={settings?.hasOpenRouterKey !== true} onClick={() => setPickerOpen(true)}>
+          <button
+            type="button"
+            aria-describedby="default-model-help"
+            disabled={settings?.hasOpenRouterKey !== true}
+            onClick={() => setPickerOpen(true)}
+          >
             {settings ? settings.model || 'Select a model' : ''} <span aria-hidden="true">▾</span>
           </button>
         </div>
+        <p id="default-model-help" className="muted setting-help">
+          Sheepdog uses this model for classifications and reviews when <code>.github/sheepdog.yml</code> of the
+          repository, or your global rules, set no <code>classification.model</code> or <code>review.model</code>.
+          Classifications and reviews also need this model and the API key.
+        </p>
       </div>
       <GlobalRules />
       {state.settingsError && <p className="error">{state.settingsError}</p>}

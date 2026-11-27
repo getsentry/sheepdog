@@ -541,7 +541,7 @@ func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.
 		return
 	}
 	if user.OpenRouterKey == "" || user.Model == "" {
-		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
+		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the default model in Settings")
 		return
 	}
 	task, err := s.tasks.Start(user.ID, s.reviewWork(user, repo, number, global))
@@ -605,7 +605,7 @@ func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	if user.OpenRouterKey == "" || user.Model == "" {
-		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
+		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the default model in Settings")
 		return
 	}
 	task, err := s.tasks.Start(user.ID, s.classifyWork(user, repo, number, global))
