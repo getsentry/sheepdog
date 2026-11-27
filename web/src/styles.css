@@ -859,11 +859,12 @@ dialog::backdrop {
 }
 
 .picker {
-  width: min(360px, 92vw);
+  width: min(460px, 92vw);
   margin: 52px auto auto 12px;
 }
 
 .picker.models {
+  width: min(360px, 92vw);
   margin: auto;
 }
 
