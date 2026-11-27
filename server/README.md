@@ -316,7 +316,9 @@ Auto refresh is on for each user and repository until the user turns it off with
 
 GitHub repository names ignore case. The server changes them to lower case, so settings, stars, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
 
-A review or a classification sends at most 200,000 characters of the diff. The server counts Unicode code points, not bytes and not visible characters. GitHub responses can have at most 50 MB for a diff and 10 MB for other data, and OpenRouter responses at most 10 MB. A larger response gives an error.
+A review sends the diff with the side and the line number before each line of a hunk, for example `new 12 | +  return a` or `old 11 | -  return b`, so that each finding names its line: `line` is the line number, or `null` for a finding about the whole file, and `side` is `new` for an added or unchanged line and `old` for a deleted line. The web app shows a finding under its line in the diff while the review is of the current head commit. Reviews from before line numbers have findings without `side` and with `line` `null`.
+
+A review or a classification sends at most 200,000 characters of the diff. For a review, the limit counts the line numbers too. The server counts Unicode code points, not bytes and not visible characters. GitHub responses can have at most 50 MB for a diff and 10 MB for other data, and OpenRouter responses at most 10 MB. A larger response gives an error.
 
 | Route | Purpose |
 | --- | --- |

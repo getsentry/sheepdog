@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseDiff } from './diff'
+import { findLine, parseDiff, samePath } from './diff'
 
 const sample = [
   'diff --git a/src/app.ts b/src/app.ts',
@@ -75,5 +75,21 @@ describe('diff', () => {
     const files = parseDiff('diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251.txt"\n--- "a/x y.txt"\n+++ "b/x y.txt"\n@@ -1 +1 @@\n-a\n+b\n')
     expect(files[0].path).toBe('x y.txt')
     expect(parseDiff('')).toEqual([])
+  })
+})
+
+describe('finding lines', () => {
+  it('finds the line of each side, and the file by its path', () => {
+    const [app, added, , renamed] = parseDiff(sample)
+    expect(findLine(app, 'new', 11)).toEqual({ hunk: 0, index: 2 })
+    expect(findLine(app, 'old', 11)).toEqual({ hunk: 0, index: 1 })
+    expect(findLine(app, 'new', 13)).toEqual({ hunk: 0, index: 4 })
+    expect(findLine(app, 'old', 12)).toEqual({ hunk: 0, index: 4 })
+    expect(findLine(app, 'new', 41)).toEqual({ hunk: 1, index: 1 })
+    expect(findLine(app, 'new', 99)).toBeNull()
+    expect(findLine(added, 'old', 1)).toBeNull()
+    for (const path of ['src/app.ts', './src/app.ts', '/src/app.ts', 'b/src/app.ts']) expect(samePath(path, app)).toBe(true)
+    expect(samePath('app.ts', app)).toBe(false)
+    expect(samePath('old/name.ts', renamed) && samePath('new/name.ts', renamed)).toBe(true)
   })
 })

@@ -132,6 +132,9 @@ export interface PullDiff {
 export interface Finding {
   severity: 'high' | 'medium' | 'low'
   file: string
+  // The line number on side, or null for a finding about the whole file. Reviews from before line numbers have no side.
+  line: number | null
+  side?: 'new' | 'old'
   title: string
   detail: string
 }

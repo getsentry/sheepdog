@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -101,7 +102,7 @@ func TestReviewIsStoredAndSurvivesRestart(t *testing.T) {
 	restarted := newHarnessAt(t, h.dbPath, defaultAllowed, nil)
 	var again store.Review
 	restarted.json("GET", reviewPath, alice, nil, http.StatusOK, &again)
-	if !again.CreatedAt.Equal(stored.CreatedAt) || again.HeadSHA != stored.HeadSHA || again.Model != stored.Model || !slices.Equal(again.Findings, stored.Findings) {
+	if !again.CreatedAt.Equal(stored.CreatedAt) || again.HeadSHA != stored.HeadSHA || again.Model != stored.Model || !reflect.DeepEqual(again.Findings, stored.Findings) {
 		t.Errorf("review after restart %+v", again)
 	}
 	restarted.wantError("GET", reviewPath, bob, nil, http.StatusNotFound, "This pull request has no review")

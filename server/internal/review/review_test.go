@@ -105,9 +105,18 @@ func TestRequestUsesStrictJsonSchema(t *testing.T) {
 	if schema["additionalProperties"] != false || len(schema["required"].([]any)) != 3 {
 		t.Fatalf("schema %v", schema)
 	}
+	finding := schema["properties"].(map[string]any)["findings"].(map[string]any)["items"].(map[string]any)
+	if required := finding["required"].([]any); len(required) != 6 || required[2] != "line" || required[3] != "side" {
+		t.Errorf("finding fields %v", required)
+	}
+	if line, _ := json.Marshal(finding["properties"].(map[string]any)["line"]); string(line) != `{"type":["integer","null"]}` {
+		t.Errorf("line schema %s", line)
+	}
 }
 
-const completionContent = `{"risk":"yellow","summary":"Changes the cache.","findings":[{"severity":"high","file":"Sources/Cache.swift","title":"Race","detail":"Two threads write."}]}`
+const completionContent = `{"risk":"yellow","summary":"Changes the cache.","findings":[` +
+	`{"severity":"high","file":"Sources/Cache.swift","line":42,"side":"new","title":"Race","detail":"Two threads write."},` +
+	`{"severity":"low","file":"README.md","line":null,"side":"old","title":"Docs","detail":"Not updated."}]}`
 
 func completion(t *testing.T, content string) []byte {
 	t.Helper()
@@ -123,9 +132,62 @@ func TestReviewIsParsedFromCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review.Risk != "yellow" || len(review.Findings) != 1 || review.Findings[0].Severity != "high" ||
-		review.Findings[0].File != "Sources/Cache.swift" {
+	if review.Risk != "yellow" || len(review.Findings) != 2 || review.Findings[0].Severity != "high" ||
+		review.Findings[0].File != "Sources/Cache.swift" || review.Findings[0].Line == nil || *review.Findings[0].Line != 42 ||
+		review.Findings[0].Side != "new" || review.Findings[1].Line != nil {
 		t.Fatalf("got %+v", review)
+	}
+}
+
+func TestFindingWithBadLineIsRejected(t *testing.T) {
+	for _, finding := range []string{
+		`{"severity":"low","file":"a","line":3,"side":"left","title":"t","detail":"d"}`,
+		`{"severity":"low","file":"a","line":0,"side":"new","title":"t","detail":"d"}`,
+		`{"severity":"low","file":"a","line":3,"title":"t","detail":"d"}`,
+	} {
+		if _, err := Parse(completion(t, `{"risk":"green","summary":"","findings":[`+finding+`]}`)); err == nil {
+			t.Errorf("finding %s was accepted", finding)
+		}
+	}
+}
+
+func TestNumberedDiff(t *testing.T) {
+	diff := strings.Join([]string{
+		"diff --git a/a.go b/a.go",
+		"--- a/a.go",
+		"+++ b/a.go",
+		"@@ -10,3 +10,3 @@ func a() {",
+		" \tx := 1",
+		"--- not a header",
+		"+\ty := 2",
+		"\\ No newline at end of file",
+		"diff --git a/b.go b/b.go",
+		"new file mode 100644",
+		"--- /dev/null",
+		"+++ b/b.go",
+		"@@ -0,0 +1 @@",
+		"+package b",
+		"",
+	}, "\n")
+	want := strings.Join([]string{
+		"diff --git a/a.go b/a.go",
+		"--- a/a.go",
+		"+++ b/a.go",
+		"@@ -10,3 +10,3 @@ func a() {",
+		"new 10 |  \tx := 1",
+		"old 11 | --- not a header",
+		"new 11 | +\ty := 2",
+		"\\ No newline at end of file",
+		"diff --git a/b.go b/b.go",
+		"new file mode 100644",
+		"--- /dev/null",
+		"+++ b/b.go",
+		"@@ -0,0 +1 @@",
+		"new 1 | +package b",
+		"",
+	}, "\n")
+	if got := NumberedDiff(diff); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -162,13 +224,15 @@ func TestRequestSendsPromptAndParsesReview(t *testing.T) {
 			} `json:"messages"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		if body.Model != "acme/model" || !strings.Contains(body.Messages[1].Content, "+fixed") {
+		if body.Model != "acme/model" || !strings.Contains(body.Messages[1].Content, "<diff>\ndiff --git a/x b/x\n@@ -1 +1 @@\nnew 1 | +fixed\n</diff>") {
 			t.Errorf("got %+v", body)
 		}
 		w.Write(completion(t, completionContent))
 	}))
 	defer server.Close()
-	review, truncated, err := Request(context.Background(), openrouter.New(server.URL, "k"), "acme/model", input)
+	numbered := input
+	numbered.Diff = "diff --git a/x b/x\n@@ -1 +1 @@\n+fixed"
+	review, truncated, err := Request(context.Background(), openrouter.New(server.URL, "k"), "acme/model", numbered)
 	if err != nil || truncated || review.Risk != "yellow" {
 		t.Fatalf("got %+v, %v, %v", review, truncated, err)
 	}

@@ -748,3 +748,60 @@ it('says when the server cut the diff, and shows a failed diff load', async () =
   expect(within(screen.getByRole('region', { name: 'Changes' })).getByText('Sorry, the diff exceeded the maximum number of files')).toBeTruthy()
   expect(within(screen.getByRole('region', { name: 'Changes' })).queryByRole('region')).toBeNull()
 })
+
+it('shows each review finding under its line in the diff, while the review is of the current commit', async () => {
+  const finding = (file: string, line: number | null, side: 'new' | 'old', title: string) =>
+    ({ severity: 'medium', file, line, side, title, detail: `Detail of ${title}` }) as const
+  let headSha = 'sha2'
+  await signedIn((seen) => {
+    if (seen.path !== '/api/repos/acme/app/pulls/2/review') return
+    return reply(200, {
+      repo: 'acme/app',
+      number: 2,
+      headSha,
+      model: 'm',
+      risk: 'yellow',
+      summary: 'Bumps expo.',
+      findings: [
+        finding('package.json', 4, 'new', 'New version'),
+        finding('./package.json', 4, 'old', 'Old version'),
+        finding('package.json', 99, 'new', 'Lost line'),
+        finding('package-lock.json', null, 'new', 'Whole lockfile'),
+        finding('README.md', 1, 'new', 'Not in the diff'),
+      ],
+      diffTruncated: false,
+      prUpdatedAt: '2027-01-15T08:00:00Z',
+      createdAt: '2027-01-15T09:00:00Z',
+    })
+  })
+  await open(2)
+  const changes = screen.getByRole('region', { name: 'Changes' })
+  const json = within(changes).getByRole('region', { name: 'package.json' })
+  expect(within(json).getByRole('button', { name: /package\.json/ }).textContent).toContain('3 findings')
+  const rows = within(json)
+    .getAllByRole('row')
+    .map((row) => (row.className === 'comment' ? `> ${row.querySelector('strong')?.textContent}` : row.textContent))
+  expect(rows).toEqual([
+    '@@ -3,3 +3,3 @@',
+    '33   "name": "app",',
+    '4-  "expo": "57.0.1"',
+    '> Old version',
+    '4+  "expo": "57.2.0"',
+    '> New version',
+    '55 }',
+  ])
+  expect(within(json).getByText('Lost line').closest('.diff-findings')?.textContent).toContain('package.json:99')
+
+  // The large lockfile opens for its finding, which is about the whole file.
+  const lock = within(changes).getByRole('region', { name: 'package-lock.json' })
+  expect(within(lock).getByRole('button', { name: /package-lock\.json/ }).getAttribute('aria-expanded')).toBe('true')
+  expect(within(lock).getByText('Whole lockfile').closest('.diff-findings')).toBeTruthy()
+  expect(within(changes).queryByText('Not in the diff')).toBeNull()
+  expect(within(screen.getByRole('region', { name: 'Review' })).getByText('README.md:1')).toBeTruthy()
+
+  headSha = 'sha-old'
+  await open(3)
+  await open(2)
+  expect(within(screen.getByRole('region', { name: 'Changes' })).queryByText('New version')).toBeNull()
+  expect(within(screen.getByRole('region', { name: 'Review' })).getByText('New version')).toBeTruthy()
+})

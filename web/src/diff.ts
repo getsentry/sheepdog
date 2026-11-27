@@ -91,3 +91,20 @@ export function parseDiff(text: string): DiffFile[] {
   }
   return files
 }
+
+// A model can write a path with ./, /, a/, or b/ before it.
+export function samePath(path: string, file: DiffFile): boolean {
+  const clean = path.replace(/^\.?\//, '').replace(/^[ab]\//, '')
+  return clean === file.path || clean === file.oldPath
+}
+
+// The hunk and the index of the line that a finding names. An unchanged line has both sides.
+export function findLine(file: DiffFile, side: 'new' | 'old', line: number): { hunk: number; index: number } | null {
+  for (const [hunk, { lines }] of file.hunks.entries()) {
+    const index = lines.findIndex((item) =>
+      side === 'old' ? item.kind !== 'add' && item.oldNumber === line : item.kind !== 'delete' && item.newNumber === line,
+    )
+    if (index >= 0) return { hunk, index }
+  }
+  return null
+}

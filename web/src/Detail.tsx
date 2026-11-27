@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useAppState, useStore } from './context'
-import { parseDiff, type DiffFile } from './diff'
+import { findLine, parseDiff, samePath, type DiffFile } from './diff'
 import { bodyText, checksTone, dangerLabel, dangerTone, humanize, riskLabels, severityTones } from './format'
 import {
   canApproveAndMerge,
@@ -15,7 +15,7 @@ import {
   type ShownClassification,
 } from './logic'
 import { isClassifying, isMerging, isReviewing } from './store'
-import type { PullRequest, Review, Row } from './types'
+import type { Finding, PullRequest, Review, Row } from './types'
 import { Capsule, ExternalLink, Spinner } from './ui'
 
 const truncatedNote = 'The diff was too large. The model saw only the first 200,000 characters.'
@@ -173,7 +173,12 @@ export function Detail({
                 </Markdown>
               </div>
             )}
-            <Changes diff={diff} error={diffError} url={row.url} />
+            <Changes
+              diff={diff}
+              error={diffError}
+              url={row.url}
+              findings={review && review.headSha === row.headSha ? review.findings : []}
+            />
           </>
         ) : (
           error === null && (
@@ -194,14 +199,17 @@ const statusLabels: Record<DiffFile['status'], string> = { added: 'Added', delet
 
 const signs = { add: '+', delete: '-', context: ' ', note: '' } as const
 
+// findings are the findings of a review of the current head commit, because the lines of an older commit can differ.
 function Changes({
   diff,
   error,
   url,
+  findings,
 }: {
   diff: { files: DiffFile[]; truncated: boolean } | null
   error: string | null
   url: string
+  findings: Finding[]
 }) {
   const additions = diff?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0
   const deletions = diff?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0
@@ -230,26 +238,50 @@ function Changes({
       )}
       {diff?.files.length === 0 && <p className="muted">No changes</p>}
       {diff?.files.map((file) => (
-        <DiffFileView key={`${file.oldPath}\n${file.path}`} file={file} />
+        <DiffFileView
+          key={`${file.oldPath}\n${file.path}`}
+          file={file}
+          findings={findings.filter((finding) => samePath(finding.file, file))}
+        />
       ))}
     </section>
   )
 }
 
-function DiffFileView({ file }: { file: DiffFile }) {
-  const [open, setOpen] = useState(file.additions + file.deletions <= collapseAbove)
+// A finding shows under its line. A finding about the whole file, or with a line that the diff does not have, shows above the lines.
+function DiffFileView({ file, findings }: { file: DiffFile; findings: Finding[] }) {
+  const [open, setOpen] = useState(findings.length > 0 || file.additions + file.deletions <= collapseAbove)
   const status = file.binary ? 'Binary' : statusLabels[file.status]
+  const atLine = new Map<string, Finding[]>()
+  const aboveLines: Finding[] = []
+  for (const finding of findings) {
+    const place = finding.line === null ? null : findLine(file, finding.side ?? 'new', finding.line)
+    if (!place) {
+      aboveLines.push(finding)
+      continue
+    }
+    const k = `${place.hunk}:${place.index}`
+    atLine.set(k, [...(atLine.get(k) ?? []), finding])
+  }
   return (
     <section className="diff-file" aria-label={file.path}>
       <button type="button" className="diff-file-header" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span aria-hidden="true">{open ? '▾' : '▸'}</span>
         <span className="diff-path">{file.status === 'renamed' ? `${file.oldPath} → ${file.path}` : file.path}</span>
         {status && <Capsule tone="gray">{status}</Capsule>}
+        {findings.length > 0 && <Capsule>{findings.length === 1 ? '1 finding' : `${findings.length} findings`}</Capsule>}
         <span className="spacer" />
         <span className="number">
           <span className="text-green">+{file.additions}</span> <span className="text-red">−{file.deletions}</span>
         </span>
       </button>
+      {open && aboveLines.length > 0 && (
+        <div className="diff-findings">
+          {aboveLines.map((finding, index) => (
+            <FindingView key={index} finding={finding} />
+          ))}
+        </div>
+      )}
       {open &&
         (file.hunks.length === 0 ? (
           <p className="muted diff-note">{file.binary ? 'Binary file' : 'No changed lines'}</p>
@@ -263,14 +295,23 @@ function DiffFileView({ file }: { file: DiffFile }) {
                       <td colSpan={3}>{hunk.header}</td>
                     </tr>
                     {hunk.lines.map((line, number) => (
-                      <tr key={number} className={line.kind}>
-                        <td className="line-number">{line.oldNumber}</td>
-                        <td className="line-number">{line.newNumber}</td>
-                        <td className="code">
-                          {signs[line.kind]}
-                          {line.text}
-                        </td>
-                      </tr>
+                      <Fragment key={number}>
+                        <tr className={line.kind}>
+                          <td className="line-number">{line.oldNumber}</td>
+                          <td className="line-number">{line.newNumber}</td>
+                          <td className="code">
+                            {signs[line.kind]}
+                            {line.text}
+                          </td>
+                        </tr>
+                        {atLine.get(`${index}:${number}`)?.map((finding, at) => (
+                          <tr key={at} className="comment">
+                            <td colSpan={3}>
+                              <FindingView finding={finding} inline />
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
                     ))}
                   </Fragment>
                 ))}
@@ -379,15 +420,27 @@ function ReviewSection({ review, prUpdatedAt }: { review: Review; prUpdatedAt: s
       {review.diffTruncated && <p className="note">{truncatedNote}</p>}
       <p className="plain">{review.summary}</p>
       {review.findings.map((finding, index) => (
-        <div key={index} className="finding">
-          <div className="finding-title">
-            <Capsule tone={severityTones[finding.severity]}>{humanize(finding.severity)}</Capsule>
-            <strong>{finding.title}</strong>
-          </div>
-          <code className="muted">{finding.file}</code>
-          <p className="plain">{finding.detail}</p>
-        </div>
+        <FindingView key={index} finding={finding} />
       ))}
     </section>
+  )
+}
+
+// inline is a finding under its line in the diff, which needs no file and line.
+function FindingView({ finding, inline = false }: { finding: Finding; inline?: boolean }) {
+  return (
+    <div className={inline ? `finding inline ${finding.severity}` : 'finding'}>
+      <div className="finding-title">
+        <Capsule tone={severityTones[finding.severity]}>{humanize(finding.severity)}</Capsule>
+        <strong>{finding.title}</strong>
+      </div>
+      {!inline && (
+        <code className="muted">
+          {finding.file}
+          {finding.line !== null && `:${finding.line}`}
+        </code>
+      )}
+      <p className="plain">{finding.detail}</p>
+    </div>
   )
 }

@@ -103,6 +103,8 @@ const review: Review = {
     {
       severity: 'low',
       file: 'package-lock.json',
+      line: 8411,
+      side: 'new',
       title: 'Transitive updates',
       detail: 'Three transitive packages move to new patch versions.',
     },
@@ -326,6 +328,13 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   const changes = page.getByRole('region', { name: 'Changes' })
   await expect(changes.getByRole('heading')).toHaveText('Changes2 files +4 −4')
   await expect(changes.getByRole('region', { name: 'package.json' }).getByRole('row')).toHaveCount(8)
+  // The finding of the review shows under its line, the new version line of expo in the lockfile.
+  const lock = changes.getByRole('region', { name: 'package-lock.json' })
+  await expect(lock.getByRole('button', { name: /package-lock\.json/ })).toContainText('1 finding')
+  const finding = lock.locator('tr.comment')
+  await expect(finding).toContainText('Transitive updates')
+  await expect(finding.locator('xpath=preceding-sibling::tr[1]')).toContainText('8411')
+  await expect(finding.locator('xpath=preceding-sibling::tr[1]')).toContainText('"version": "57.2.0"')
   await changes.scrollIntoViewIfNeeded()
   await page.screenshot({ path: join(screenshots, '15-diff.png') })
   // The header of the detail panel lines up with the sidebar header and stays on top while the PR scrolls.

@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"sheepdog/internal/github"
@@ -25,6 +28,9 @@ Rate the risk of the change:
 - red: dangerous change, for example security, data loss, a breaking public API, crashes, concurrency, or the release and build pipeline. Also use red when you cannot judge the change. A human must review it in full.
 
 Report only concrete findings, each with the path of the file. Do not report style nits that a linter catches.
+In the diff, each line of a hunk starts with its side and its line number, for example "new 12 | +  return a" for an added line,
+"new 13 |    return b" for an unchanged line, and "old 11 | -  return c" for a deleted line. Give each finding the side and the line
+number of the line that it is about, exactly as the diff shows them. Use null for the line when the finding is about the whole file.
 In the summary, say in two to four sentences what the PR changes and why you chose the risk.`
 
 type Input struct {
@@ -48,8 +54,46 @@ type Review struct {
 type Finding struct {
 	Severity string `json:"severity"`
 	File     string `json:"file"`
-	Title    string `json:"title"`
-	Detail   string `json:"detail"`
+	// Line is the line number on Side, "new" or "old", or nil for a finding about the whole file. Reviews from before line numbers have neither.
+	Line   *int   `json:"line"`
+	Side   string `json:"side,omitempty"`
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+}
+
+var hunkHeader = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
+
+// NumberedDiff writes the side and the line number before each line of a hunk, so that the model can name the line of a finding.
+// An added or unchanged line gets its number in the new file, and a deleted line its number in the old file.
+func NumberedDiff(diff string) string {
+	var out strings.Builder
+	inHunk := false
+	oldLine, newLine := 0, 0
+	for _, line := range strings.SplitAfter(diff, "\n") {
+		text := strings.TrimSuffix(line, "\n")
+		if header := hunkHeader.FindStringSubmatch(text); header != nil {
+			oldLine, _ = strconv.Atoi(header[1])
+			newLine, _ = strconv.Atoi(header[2])
+			inHunk = true
+		} else if strings.HasPrefix(text, "diff --git ") {
+			inHunk = false
+		} else if inHunk {
+			switch {
+			case strings.HasPrefix(text, "+"):
+				fmt.Fprintf(&out, "new %d | ", newLine)
+				newLine++
+			case strings.HasPrefix(text, "-"):
+				fmt.Fprintf(&out, "old %d | ", oldLine)
+				oldLine++
+			case strings.HasPrefix(text, " "):
+				fmt.Fprintf(&out, "new %d | ", newLine)
+				oldLine++
+				newLine++
+			}
+		}
+		out.WriteString(line)
+	}
+	return out.String()
 }
 
 // LoadInput loads the PR, its diff, and AGENTS.md from the base branch, so that a PR cannot change its own instructions.
@@ -124,10 +168,12 @@ var schema = map[string]any{
 			"items": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
-				"required":             []string{"severity", "file", "title", "detail"},
+				"required":             []string{"severity", "file", "line", "side", "title", "detail"},
 				"properties": map[string]any{
 					"severity": map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
 					"file":     map[string]any{"type": "string"},
+					"line":     map[string]any{"type": []string{"integer", "null"}},
+					"side":     map[string]any{"type": "string", "enum": []string{"new", "old"}},
 					"title":    map[string]any{"type": "string"},
 					"detail":   map[string]any{"type": "string"},
 				},
@@ -196,6 +242,12 @@ func Parse(data []byte) (Review, error) {
 		if !slices.Contains([]string{"high", "medium", "low"}, finding.Severity) {
 			return Review{}, fmt.Errorf("the model returned an unknown severity %q", finding.Severity)
 		}
+		if !slices.Contains([]string{"new", "old"}, finding.Side) {
+			return Review{}, fmt.Errorf("the model returned an unknown side %q", finding.Side)
+		}
+		if finding.Line != nil && *finding.Line < 1 {
+			return Review{}, fmt.Errorf("the model returned the line %d", *finding.Line)
+		}
 	}
 	if review.Findings == nil {
 		review.Findings = []Finding{}
@@ -203,8 +255,9 @@ func Parse(data []byte) (Review, error) {
 	return review, nil
 }
 
-// Request sends the review of one PR to OpenRouter and reports whether the diff was cut.
+// Request sends the review of one PR to OpenRouter and reports whether the diff was cut. The diff has line numbers, and the limit counts them too.
 func Request(ctx context.Context, client *openrouter.Client, model string, in Input) (Review, bool, error) {
+	in.Diff = NumberedDiff(in.Diff)
 	user, truncated := UserPrompt(in)
 	body, err := RequestBody(model, user)
 	if err != nil {

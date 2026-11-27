@@ -238,7 +238,7 @@ func (f *fakeOpenRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		reply := `{"risk":"yellow","summary":"Looks fine.","findings":[{"severity":"low","file":"a.go","title":"t","detail":"d"}]}`
+		reply := `{"risk":"yellow","summary":"Looks fine.","findings":[{"severity":"low","file":"a.go","line":3,"side":"new","title":"t","detail":"d"}]}`
 		if bytes.Contains(body, []byte(`"name":"classification"`)) {
 			reply = `{"score":4,"reason":"Medium risk."}`
 		}
