@@ -172,6 +172,13 @@ export function isAutoClassified(state: State, repo: string): boolean {
   return state.settings?.autoClassifyRepos.includes(repo.toLowerCase()) ?? false
 }
 
+export function isAutoReviewed(state: State, repo: string): boolean {
+  return state.settings?.autoReviewRepos.includes(repo.toLowerCase()) ?? false
+}
+
+// The list in the settings that the repository picker uses for each switch.
+const repoLists = { autoClassify: 'autoClassifyRepos', autoReview: 'autoReviewRepos' } as const
+
 function without<T>(record: Record<string, T>, k: string): Record<string, T> {
   if (!(k in record)) return record
   const { [k]: _, ...rest } = record
@@ -628,10 +635,11 @@ export function createStore(deps: Partial<StoreDeps> = {}) {
       dispatch({ type: 'pending', set: 'savingPreferences', key: name, on: true })
       try {
         await checked((client) => client.updateRepoSettings(current.repo, { [name]: on }))
-        // The repository picker sorts and marks the repositories with auto classify by this list.
-        if (name === 'autoClassify' && state.settings) {
-          const others = state.settings.autoClassifyRepos.filter((repo) => repo !== current.repo)
-          set({ settings: { ...state.settings, autoClassifyRepos: on ? [...others, current.repo].sort() : others } })
+        // The repository picker sorts and marks the repositories with auto classify or auto review by these lists.
+        if (name !== 'autoRefresh' && state.settings) {
+          const list = repoLists[name]
+          const others = state.settings[list].filter((repo) => repo !== current.repo)
+          set({ settings: { ...state.settings, [list]: on ? [...others, current.repo].sort() : others } })
         }
       } catch (error) {
         if (error instanceof Cancelled) return

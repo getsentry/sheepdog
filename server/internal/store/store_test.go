@@ -859,3 +859,73 @@ func TestLatestReviewsOfRepository(t *testing.T) {
 		t.Errorf("bob sees %+v, want an empty list", list)
 	}
 }
+
+func TestAutoReviewPrefs(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "test.db"), newKey(t))
+	ctx := context.Background()
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	on, off := true, false
+	if err := s.UpdatePrefs(ctx, alice, "acme/app", PrefsUpdate{AutoReview: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdatePrefs(ctx, alice, "acme/web", PrefsUpdate{AutoClassify: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdatePrefs(ctx, alice, "acme/web", PrefsUpdate{AutoReview: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdatePrefs(ctx, alice, "acme/web", PrefsUpdate{AutoReview: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.Prefs(ctx, alice, "acme/app"); err != nil || p != (Prefs{AutoRefresh: true, AutoReview: true}) {
+		t.Errorf("acme/app prefs %+v, %v", p, err)
+	}
+	if p, err := s.Prefs(ctx, alice, "acme/web"); err != nil || p != (Prefs{AutoRefresh: true, AutoClassify: true}) {
+		t.Errorf("acme/web prefs %+v, %v", p, err)
+	}
+	if list, err := s.AutoReviewRepos(ctx, alice); err != nil || !slices.Equal(list, []string{"acme/app"}) {
+		t.Errorf("auto review repositories %v, %v", list, err)
+	}
+	if list, err := s.AutoClassifyRepos(ctx, alice); err != nil || !slices.Equal(list, []string{"acme/web"}) {
+		t.Errorf("auto classify repositories %v, %v", list, err)
+	}
+}
+
+func TestOpenAddsAutoReviewToOlderPrefs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	key := newKey(t)
+	ctx := context.Background()
+	s, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := s.UpsertUser(ctx, 1, "alice", "ghp_a")
+	if _, err := s.db.Exec(`DROP TABLE repo_prefs;
+		CREATE TABLE repo_prefs (
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			repo TEXT NOT NULL,
+			auto_refresh INTEGER NOT NULL,
+			auto_classify INTEGER NOT NULL,
+			PRIMARY KEY (user_id, repo)
+		);
+		INSERT INTO repo_prefs VALUES (1, 'acme/app', 0, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	for range 2 {
+		s = openStore(t, path, key)
+		if p, err := s.Prefs(ctx, alice, "acme/app"); err != nil || p != (Prefs{AutoClassify: true}) {
+			t.Errorf("prefs of the older table %+v, %v", p, err)
+		}
+		s.Close()
+	}
+	s = openStore(t, path, key)
+	on := true
+	if err := s.UpdatePrefs(ctx, alice, "acme/app", PrefsUpdate{AutoReview: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.Prefs(ctx, alice, "acme/app"); err != nil || p != (Prefs{AutoClassify: true, AutoReview: true}) {
+		t.Errorf("prefs after auto review on %+v, %v", p, err)
+	}
+}

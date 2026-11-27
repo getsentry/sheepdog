@@ -126,7 +126,7 @@ func (s *Server) poll(ctx context.Context, run *pollRun, user store.User) {
 			return
 		}
 		if err == nil {
-			s.autoClassify(ctx, user.ID, user.Repo, polled.Rows, polled.global)
+			s.autoWork(ctx, user.ID, user.Repo, polled.Rows, polled.global)
 		}
 		ticker.Reset(s.pollInterval)
 		if !s.waitPoll(ctx, run, user.ID, user.Repo, ticker.C) {

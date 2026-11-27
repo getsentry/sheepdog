@@ -73,11 +73,18 @@ export function RepoSettings({ repo, onClose }: { repo: string; onClose: () => v
           </section>
           <section aria-label="Review">
             <h3>Review</h3>
-            <Switch label="Auto-review" checked={false} disabled />
+            <Switch
+              label="Auto-review"
+              checked={current.autoReview}
+              onChange={(on) => void actions.setRepoPreference('autoReview', on)}
+            />
             <p className="muted">
-              Sheepdog will review new pull requests by itself. Each review sends the diff to OpenRouter with your API
-              key. It uses tokens, and you pay for them. Auto-review does not work yet.
+              Sheepdog reviews each new commit of the pull requests in the list, except drafts, at most two at a time.
+              Each review sends the diff to OpenRouter with your API key. It uses tokens, and you pay for them.
             </p>
+            {current.autoReview && missingModel && (
+              <p className="error">Auto-review needs an OpenRouter API key and a model in Settings.</p>
+            )}
           </section>
         </>
       )}

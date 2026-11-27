@@ -19,7 +19,7 @@ type Row struct {
 	github.Row
 	Lane           *Lane             `json:"lane,omitempty"`
 	Classification *CIClassification `json:"classification,omitempty"`
-	// autoClassify is true when auto classify may classify the row. See autoClassify.
+	// autoClassify is true when auto classify may classify the row. See autoWork.
 	autoClassify bool
 }
 

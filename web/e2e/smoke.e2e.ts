@@ -187,7 +187,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   let starred: string[] = []
   let globalRules = ''
   // The settings of each repository that the user changed.
-  const repoSettings = new Map<string, { autoRefresh: boolean; autoClassify: boolean }>()
+  const repoSettings = new Map<string, { autoRefresh: boolean; autoClassify: boolean; autoReview: boolean }>()
   // The event streams after a refresh wait until the test checks the spinner.
   let refreshHeld = Promise.resolve()
   let releaseRefresh = () => {}
@@ -204,6 +204,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
     hasOpenRouterKey: true,
     starred,
     autoClassifyRepos: [...repoSettings].filter(([, value]) => value.autoClassify).map(([name]) => name).sort(),
+    autoReviewRepos: [...repoSettings].filter(([, value]) => value.autoReview).map(([name]) => name).sort(),
     globalRules,
   })
   const requests = (): Requests =>
@@ -243,7 +244,7 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
     }
     const settingsOf = path.match(/^\/api\/repos\/([^/]+\/[^/]+)\/settings$/)
     if (settingsOf) {
-      const current = repoSettings.get(settingsOf[1]) ?? { autoRefresh: true, autoClassify: false }
+      const current = repoSettings.get(settingsOf[1]) ?? { autoRefresh: true, autoClassify: false, autoReview: false }
       if (request.method() === 'PUT') repoSettings.set(settingsOf[1], { ...current, ...request.postDataJSON() })
       return json(route, 200, { repo: settingsOf[1], ...(repoSettings.get(settingsOf[1]) ?? current) })
     }
@@ -453,12 +454,14 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   const reviewSwitch = repoDialog.getByRole('region', { name: 'Review' }).getByRole('switch', { name: 'Auto-review' })
   await expect(refreshSwitch).toBeChecked()
   await expect(classifySwitch).not.toBeChecked()
-  await expect(reviewSwitch).toBeDisabled()
+  await expect(reviewSwitch).not.toBeChecked()
   await refreshSwitch.click()
   await expect(refreshSwitch).not.toBeChecked()
   await classifySwitch.click()
   await expect(classifySwitch).toBeChecked()
-  await expect.poll(() => repoSettings.get(sample)).toEqual({ autoRefresh: false, autoClassify: true })
+  await reviewSwitch.click()
+  await expect(reviewSwitch).toBeChecked()
+  await expect.poll(() => repoSettings.get(sample)).toEqual({ autoRefresh: false, autoClassify: true, autoReview: true })
   await expect(repoDialog.getByRole('alert')).toHaveCount(0)
   await page.screenshot({ path: join(screenshots, '10-repo-settings.png'), animations: 'disabled' })
   await repoDialog.getByRole('button', { name: 'Close' }).click()
@@ -467,9 +470,11 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await updates.getByRole('button', { name: 'Repository settings' }).click()
   await expect(refreshSwitch).not.toBeChecked()
   await expect(classifySwitch).toBeChecked()
+  await expect(reviewSwitch).toBeChecked()
   expect(writes.slice(5)).toEqual([
     'PUT /api/settings',
     'POST /api/review-requests/refresh',
+    `PUT /api/repos/${sample}/settings`,
     `PUT /api/repos/${sample}/settings`,
     `PUT /api/repos/${sample}/settings`,
   ])
@@ -489,6 +494,8 @@ test('signs in, opens a PR, cancels approve and merge, opens the settings, sets 
   await expect(names).toHaveText(['getsentry/sentry-react-native', sample, 'getsentry/sentry-cocoa', bare])
   await expect(names.nth(1).getByRole('img', { name: 'Auto-classify is on' })).toBeVisible()
   await expect(picker.getByRole('img', { name: 'Auto-classify is on' })).toHaveCount(1)
+  await expect(names.nth(1).getByRole('img', { name: 'Auto-review is on' })).toBeVisible()
+  await expect(picker.getByRole('img', { name: 'Auto-review is on' })).toHaveCount(1)
   await page.screenshot({ path: join(screenshots, '14-auto-classify-picker.png') })
   await picker.getByRole('searchbox').fill('capacitor')
   await picker.getByRole('button', { name: bare }).click()

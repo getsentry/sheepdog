@@ -3,9 +3,10 @@ import { useAppState, useStore } from './context'
 import { dangerTone, elapsed, relativeTime } from './format'
 import { isOutdated, key, laneSections, pickerOrder, shownClassification, type LaneSection } from './logic'
 import { RepoSettings } from './RepoSettings'
-import { currentRepo, hasNoRules, isAutoClassified, isMerging, isSettingUp, isStarred } from './store'
+import { currentRepo, hasNoRules, isAutoClassified, isAutoReviewed, isMerging, isSettingUp, isStarred } from './store'
 import type { PullLink, Row, Setup } from './types'
 import {
+  BubbleIcon,
   Capsule,
   CheckIcon,
   ExternalLink,
@@ -83,7 +84,10 @@ function RepoPicker() {
   const name = state.repositories?.find((item) => item.toLowerCase() === repo.toLowerCase()) ?? repo
   const repositories =
     state.repositories &&
-    pickerOrder(state.repositories, state.settings?.starred ?? [], state.settings?.autoClassifyRepos ?? [])
+    pickerOrder(state.repositories, state.settings?.starred ?? [], [
+      ...(state.settings?.autoClassifyRepos ?? []),
+      ...(state.settings?.autoReviewRepos ?? []),
+    ])
 
   return (
     <>
@@ -120,6 +124,11 @@ function RepoPicker() {
                   {isAutoClassified(state, item) && (
                     <span className="repo-flag" role="img" aria-label="Auto-classify is on" title="Auto-classify is on">
                       <GaugeIcon />
+                    </span>
+                  )}
+                  {isAutoReviewed(state, item) && (
+                    <span className="repo-flag" role="img" aria-label="Auto-review is on" title="Auto-review is on">
+                      <BubbleIcon />
                     </span>
                   )}
                   <button

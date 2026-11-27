@@ -47,7 +47,7 @@ type Server struct {
 	repoCache map[int64]cachedRepos
 	// rulesChecks are the answers of missingRules.
 	rulesChecks map[rulesKey]rulesCheck
-	// autoTried holds for each user the head commit that auto classify started for each PR key.
+	// autoTried holds for each user the head commit that auto classify or auto review started, keyed by the task kind and the PR key.
 	autoTried map[int64]map[string]string
 }
 

@@ -7,7 +7,7 @@ import { approveAndMergeAction, type Classification, type Review, type RunningTa
 
 const notAllowed = 'This GitHub account is not allowed on this server'
 const badSession = 'The session is not valid. Sign in again'
-const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [] }
+const settings = { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [], autoReviewRepos: [] }
 
 const task: RunningTask = {
   id: 'T1',
@@ -362,14 +362,14 @@ describe('store', () => {
       if (owner === 'A' && method === 'PUT' && path === '/api/settings') {
         held += 1
         await gate.wait()
-        return reply(200, { repo: 'acme/old', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [] })
+        return reply(200, { repo: 'acme/old', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [], autoReviewRepos: [] })
       }
       if (owner === 'A' && path === '/api/repos') {
         held += 1
         await gate.wait()
         return failure(401, badSession)
       }
-      if (owner === 'B' && path === '/api/settings') return reply(200, { repo: 'bob/new', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [] })
+      if (owner === 'B' && path === '/api/settings') return reply(200, { repo: 'bob/new', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [], autoReviewRepos: [] })
     })
     const select = s.actions.selectRepo('acme/old')
     const repos = s.actions.loadRepositories()
@@ -756,6 +756,11 @@ describe('store', () => {
     fails = false
     await s.actions.setRepoPreference('autoClassify', false)
     expect(s.state().settings?.autoClassifyRepos).toEqual(['acme/web'])
+    await s.actions.setRepoPreference('autoReview', true)
+    expect(s.state().settings?.autoReviewRepos).toEqual(['acme/app'])
+    expect(s.state().settings?.autoClassifyRepos).toEqual(['acme/web'])
+    await s.actions.setRepoPreference('autoReview', false)
+    expect(s.state().settings?.autoReviewRepos).toEqual([])
   })
 
   it('shows no settings of another repository, also when its load answers late', async () => {

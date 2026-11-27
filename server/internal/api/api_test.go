@@ -202,8 +202,9 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // fakeOpenRouter accepts only aliceKey. The model slow/model answers only after the request ends.
 type fakeOpenRouter struct {
 	mu sync.Mutex
-	// classifications counts the classification requests, also the refused ones.
+	// classifications and reviews count the requests of each kind, also the refused ones.
 	classifications int
+	reviews         int
 	bodies          []string
 	started         chan struct{}
 	cancelled       chan struct{}
@@ -211,11 +212,14 @@ type fakeOpenRouter struct {
 
 func (f *fakeOpenRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
+	f.mu.Lock()
 	if bytes.Contains(body, []byte(`"name":"classification"`)) {
-		f.mu.Lock()
 		f.classifications++
-		f.mu.Unlock()
 	}
+	if bytes.Contains(body, []byte(`"name":"review"`)) {
+		f.reviews++
+	}
+	f.mu.Unlock()
 	if r.Header.Get("Authorization") != "Bearer "+aliceKey {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -635,16 +639,16 @@ func TestUsersSeeOnlyOwnData(t *testing.T) {
 
 	var settings settingsResponse
 	h.json("PUT", "/api/settings", alice, map[string]string{"repo": aliceRepo, "model": "m/alice", "openRouterKey": aliceKey}, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}, AutoClassifyRepos: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}, AutoClassifyRepos: []string{}, AutoReviewRepos: []string{}}) {
 		t.Errorf("alice settings %+v", settings)
 	}
 	h.json("GET", "/api/settings", bob, nil, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}, AutoClassifyRepos: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Starred: []string{}, AutoClassifyRepos: []string{}, AutoReviewRepos: []string{}}) {
 		t.Errorf("bob settings before PUT %+v", settings)
 	}
 	h.json("PUT", "/api/settings", bob, map[string]string{"repo": bobRepo, "openRouterKey": bobWrongKey}, http.StatusOK, &settings)
 	h.json("GET", "/api/settings", alice, nil, http.StatusOK, &settings)
-	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}, AutoClassifyRepos: []string{}}) {
+	if !reflect.DeepEqual(settings, settingsResponse{Repo: aliceRepo, Model: "m/alice", HasOpenRouterKey: true, Starred: []string{}, AutoClassifyRepos: []string{}, AutoReviewRepos: []string{}}) {
 		t.Errorf("alice settings after bob PUT %+v", settings)
 	}
 

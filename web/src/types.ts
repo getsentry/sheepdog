@@ -11,8 +11,9 @@ export interface Settings {
   hasOpenRouterKey: boolean
   // The starred repositories in lower case and in name order.
   starred: string[]
-  // The repositories with auto classify on, in lower case and in name order.
+  // The repositories with auto classify or auto review on, in lower case and in name order.
   autoClassifyRepos: string[]
+  autoReviewRepos: string[]
   // The rules for repositories without .github/sheepdog.yml, or "" without them.
   globalRules: string
 }
@@ -24,9 +25,11 @@ export interface RepoSettings {
   autoRefresh: boolean
   // On when the server classifies the PRs where only a score is missing for an approve-and-automerge lane.
   autoClassify: boolean
+  // On when the server reviews each new head commit of the PRs that are not drafts.
+  autoReview: boolean
 }
 
-export type Preference = 'autoRefresh' | 'autoClassify'
+export type Preference = 'autoRefresh' | 'autoClassify' | 'autoReview'
 
 // A missing field stays unchanged. An empty openRouterKey deletes the key.
 export interface SettingsUpdate {

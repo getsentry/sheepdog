@@ -232,6 +232,20 @@ After each poll, the server then classifies a PR only when all of these conditio
 
 The classifications show in the running tasks, and the user can stop them. Auto classify does not approve or merge. "Approve and merge" still needs a click. When the user turns auto classify on, the server checks GitHub at once.
 
+## Auto review
+
+Auto review is off for each user and repository until the user turns it on with `PUT /api/repos/{owner}/{name}/settings` and `{"autoReview": true}`, or with the "Auto-review" switch in the repository settings of the web app. Each review is a request to OpenRouter with the key of the user, so the user pays for it.
+
+After each poll, the server then reviews a PR when all of these conditions are true:
+
+1. The user has an OpenRouter key and a model in Settings.
+2. The PR is not a draft.
+3. The user has no stored review of the head commit of the PR.
+4. The server did not start a review of this head commit for the user before. A failed or stopped review runs again only after a new commit, or after a restart of the server.
+5. The user has fewer than 2 reviews that run. Classifications count apart. The server starts the next review at the next poll.
+
+So each new commit of a PR gets one review. A review uses `review.model` of the rules, or the model of the user, as a click on "Review" does. The reviews show in the running tasks, and the user can stop them. When the user turns auto review on, the server checks GitHub at once.
+
 ## Classification in CI
 
 A repository can classify every PR in GitHub Actions. Then the score is ready without a click, and every user sees a score from the same model. The model is `classification.model` in `.github/sheepdog.yml`.
@@ -314,9 +328,9 @@ The browser sends the cookie by itself, so the server protects cookie requests a
 
 The routes under `/api/repos/{owner}/{name}/pulls/` and `/api/repos/{owner}/{name}/classifications` return 409 for a repository without `.github/sheepdog.yml` on its default branch, when the user has no global rules.
 
-The web app shows the starred repositories first in the repository picker, then the repositories with auto classify on, then the others. A gauge icon marks the repositories with auto classify. Sheepdog keeps the stars in its own database for each user, not on GitHub, because a star on GitHub is public and has another meaning. A star does not need `.github/sheepdog.yml`.
+The web app shows the starred repositories first in the repository picker, then the repositories with auto classify or auto review on, then the others. A gauge icon marks the repositories with auto classify, and a speech bubble the repositories with auto review. Sheepdog keeps the stars in its own database for each user, not on GitHub, because a star on GitHub is public and has another meaning. A star does not need `.github/sheepdog.yml`.
 
-Auto refresh is on for each user and repository until the user turns it off with `PUT /api/repos/{owner}/{name}/settings` and `{"autoRefresh": false}`. Then the server does not check GitHub every 30 seconds while the user has this repository selected. It still checks at once when the user selects the repository, asks for a refresh, stores a classification, approves and merges a PR, or opens a setup PR. When the user turns auto refresh on again for the selected repository, the server checks at once and then every 30 seconds. The server keeps the repository settings in the table `repo_prefs`. A repository without a row there has auto refresh on and auto classify off. The web app has a refresh button and a "Repository settings" button at the bottom of the sidebar.
+Auto refresh is on for each user and repository until the user turns it off with `PUT /api/repos/{owner}/{name}/settings` and `{"autoRefresh": false}`. Then the server does not check GitHub every 30 seconds while the user has this repository selected. It still checks at once when the user selects the repository, asks for a refresh, stores a classification, approves and merges a PR, or opens a setup PR. When the user turns auto refresh on again for the selected repository, the server checks at once and then every 30 seconds. The server keeps the repository settings in the table `repo_prefs`. A repository without a row there has auto refresh on, and auto classify and auto review off. The web app has a refresh button and a "Repository settings" button at the bottom of the sidebar.
 
 GitHub repository names ignore case. The server changes them to lower case, so settings, stars, review requests, tasks, events, stored reviews, and stored classifications always use lower case names.
 
@@ -330,9 +344,9 @@ A review or a classification sends at most 200,000 characters of the diff. For a
 | `DELETE /api/session` | Sign out. Ends this session, closes its event streams, and deletes the session cookie. Returns 204. |
 | `DELETE /api/sessions` | Sign out on all devices. Ends every session of the user, closes all its event streams, and deletes the session cookie. Returns 204. |
 | `GET /api/me` | Returns `{"login"}`. |
-| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, `starred`, `autoClassifyRepos`, and `globalRules`. `autoClassifyRepos` lists the repositories with auto classify on in name order, and is an empty list when there is none. `PUT` takes `repo`, `model`, `openRouterKey`, and `globalRules`. An empty key deletes it. An empty `globalRules` deletes the global rules, and rules that are not valid get status 400. See [Global rules](#global-rules). `starred` is the list of starred repositories in name order, and an empty list when there is none. |
+| `GET /api/settings`, `PUT /api/settings` | `repo`, `model`, `hasOpenRouterKey`, `starred`, `autoClassifyRepos`, `autoReviewRepos`, and `globalRules`. `autoClassifyRepos` and `autoReviewRepos` list the repositories with auto classify or auto review on in name order. Each is an empty list when there is none. `PUT` takes `repo`, `model`, `openRouterKey`, and `globalRules`. An empty key deletes it. An empty `globalRules` deletes the global rules, and rules that are not valid get status 400. See [Global rules](#global-rules). `starred` is the list of starred repositories in name order, and an empty list when there is none. |
 | `GET /api/repos` | The repositories of the user. |
-| `GET /api/repos/{owner}/{name}/settings`, `PUT /api/repos/{owner}/{name}/settings` | The settings of the user for the repository: `repo`, `autoRefresh`, and `autoClassify`. `PUT` takes `autoRefresh` and `autoClassify`, and returns the new settings. A repository without `.github/sheepdog.yml` has settings too. |
+| `GET /api/repos/{owner}/{name}/settings`, `PUT /api/repos/{owner}/{name}/settings` | The settings of the user for the repository: `repo`, `autoRefresh`, `autoClassify`, and `autoReview`. `PUT` takes `autoRefresh`, `autoReview`, and `autoClassify`, and returns the new settings. A repository without `.github/sheepdog.yml` has settings too. |
 | `PUT /api/repos/{owner}/{name}/star`, `DELETE /api/repos/{owner}/{name}/star` | Add or remove a star of the repository. Returns the settings. A second `PUT` or `DELETE` changes nothing. A user can star at most 200 repositories. One more star gets status 409. |
 | `GET /api/models` | The OpenRouter models that support structured outputs. |
 | `GET /api/review-requests` | The result of the last check of the selected repository: `repo`, `fetchedAt`, `rows`, `lanes`, `defaultBranch` after the first successful check, and the optional `error`, `rulesError`, and `setup`. `setup` is set only when the default branch has no rules file. See [Set up a repository](#set-up-a-repository). Each row has `headSha`, and a `lane` with `name`, `action`, and `notes` when the repository has a valid rules file. A row with a CI score has `classification` with `source` (always `ci`), `score`, `reason`, `model`, and `headSha`. `lanes` lists the lane names in file order, without `manual`. `rulesError` explains why the rules file is not valid. |

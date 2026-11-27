@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS repo_prefs (
 	repo TEXT NOT NULL,
 	auto_refresh INTEGER NOT NULL,
 	auto_classify INTEGER NOT NULL,
+	auto_review INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (user_id, repo)
 );
 `
@@ -108,16 +109,18 @@ type Settings struct {
 	OpenRouterKey *string
 }
 
-// Prefs are the switches of a user for one repository. Without stored preferences, auto refresh is on and auto classify is off.
+// Prefs are the switches of a user for one repository. Without stored preferences, auto refresh is on, and auto classify and auto review are off.
 type Prefs struct {
 	AutoRefresh  bool
 	AutoClassify bool
+	AutoReview   bool
 }
 
 // PrefsUpdate holds a partial update. A nil field stays unchanged.
 type PrefsUpdate struct {
 	AutoRefresh  *bool
 	AutoClassify *bool
+	AutoReview   *bool
 }
 
 func Open(path string, key []byte) (*Store, error) {
@@ -143,6 +146,18 @@ func Open(path string, key []byte) (*Store, error) {
 	if !hasGitHubID {
 		db.Close()
 		return nil, fmt.Errorf("the database %s is from an older version without users.github_id: delete it and start again", path)
+	}
+	// A repo_prefs table from before auto review keeps its settings and gets the column with auto review off.
+	var hasAutoReview bool
+	if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info('repo_prefs') WHERE name = 'auto_review'`).Scan(&hasAutoReview); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if !hasAutoReview {
+		if _, err := db.Exec(`ALTER TABLE repo_prefs ADD COLUMN auto_review INTEGER NOT NULL DEFAULT 0`); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return &Store{db: db, sealer: s}, nil
 }
@@ -262,8 +277,8 @@ func (s *Store) SetGlobalRules(ctx context.Context, userID int64, content string
 
 func (s *Store) Prefs(ctx context.Context, userID int64, repo string) (Prefs, error) {
 	var p Prefs
-	err := s.db.QueryRowContext(ctx, `SELECT auto_refresh, auto_classify FROM repo_prefs WHERE user_id = ? AND repo = ?`, userID, repo).
-		Scan(&p.AutoRefresh, &p.AutoClassify)
+	err := s.db.QueryRowContext(ctx, `SELECT auto_refresh, auto_classify, auto_review FROM repo_prefs WHERE user_id = ? AND repo = ?`, userID, repo).
+		Scan(&p.AutoRefresh, &p.AutoClassify, &p.AutoReview)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Prefs{AutoRefresh: true}, nil
 	}
@@ -272,7 +287,17 @@ func (s *Store) Prefs(ctx context.Context, userID int64, repo string) (Prefs, er
 
 // AutoClassifyRepos returns the repositories where the user has auto classify on, in name order. The list is empty, not nil, without them.
 func (s *Store) AutoClassifyRepos(ctx context.Context, userID int64) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT repo FROM repo_prefs WHERE user_id = ? AND auto_classify ORDER BY repo`, userID)
+	return s.reposWith(ctx, userID, "auto_classify")
+}
+
+// AutoReviewRepos works as AutoClassifyRepos does, for auto review.
+func (s *Store) AutoReviewRepos(ctx context.Context, userID int64) ([]string, error) {
+	return s.reposWith(ctx, userID, "auto_review")
+}
+
+// reposWith returns the repositories where the switch in column is on. column is a constant of this package.
+func (s *Store) reposWith(ctx context.Context, userID int64, column string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT repo FROM repo_prefs WHERE user_id = ? AND `+column+` ORDER BY repo`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -291,11 +316,13 @@ func (s *Store) AutoClassifyRepos(ctx context.Context, userID int64) ([]string, 
 // UpdatePrefs changes the preferences of the user for the repository. A new row starts from the defaults of Prefs.
 func (s *Store) UpdatePrefs(ctx context.Context, userID int64, repo string, update PrefsUpdate) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO repo_prefs (user_id, repo, auto_refresh, auto_classify) VALUES (?1, ?2, COALESCE(?3, 1), COALESCE(?4, 0))
+		INSERT INTO repo_prefs (user_id, repo, auto_refresh, auto_classify, auto_review)
+		VALUES (?1, ?2, COALESCE(?3, 1), COALESCE(?4, 0), COALESCE(?5, 0))
 		ON CONFLICT (user_id, repo) DO UPDATE SET
 			auto_refresh = COALESCE(?3, auto_refresh),
-			auto_classify = COALESCE(?4, auto_classify)`,
-		userID, repo, update.AutoRefresh, update.AutoClassify)
+			auto_classify = COALESCE(?4, auto_classify),
+			auto_review = COALESCE(?5, auto_review)`,
+		userID, repo, update.AutoRefresh, update.AutoClassify, update.AutoReview)
 	return err
 }
 

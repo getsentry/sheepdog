@@ -86,7 +86,7 @@ async function signedIn(handler: (seen: Seen) => ReturnType<Parameters<typeof fa
       case 'GET /api/me':
         return reply(200, { login: 'alwx' })
       case 'GET /api/settings':
-        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [] })
+        return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [], autoReviewRepos: [] })
       case 'GET /api/repos':
         return reply(200, ['acme/app'])
       case 'GET /api/models':
@@ -356,10 +356,10 @@ it('shows the starred repositories first, also while searching, and a click on a
   let starred = ['acme/tools']
   const { sent } = await signedIn((seen) => {
     if (seen.path === '/api/repos') return reply(200, ['acme/app', 'Acme/Tools', 'acme/web', 'other/tooling'])
-    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred, autoClassifyRepos: [] })
+    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred, autoClassifyRepos: [], autoReviewRepos: [] })
     if (seen.path === '/api/repos/acme/web/star') {
       starred = seen.method === 'PUT' ? ['acme/tools', 'acme/web'] : ['acme/tools']
-      return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred, autoClassifyRepos: [] })
+      return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred, autoClassifyRepos: [], autoReviewRepos: [] })
     }
   })
   await act(async () => {
@@ -463,14 +463,16 @@ async function openRepoSettings() {
   return screen.getByRole('dialog', { name: 'Repository settings' })
 }
 
-it('opens the repository settings with refresh, classify, and a disabled review', async () => {
+it('opens the repository settings with refresh, classify, and review', async () => {
   const gate = new Gate()
   let fails = false
   const { sent } = await signedIn((seen) => {
     if (seen.path !== repoSettingsPath) return
-    if (seen.method === 'GET') return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false })
+    if (seen.method === 'GET') return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false, autoReview: false })
     return gate.wait().then(() =>
-      fails ? failure(500, 'Internal server error') : reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: true }),
+      fails
+        ? failure(500, 'Internal server error')
+        : reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: true, autoReview: true }),
     )
   })
   const dialog = await openRepoSettings()
@@ -480,9 +482,10 @@ it('opens the repository settings with refresh, classify, and a disabled review'
   const refresh = within(section('Refresh')).getByRole<HTMLInputElement>('switch', { name: 'Auto-refresh' })
   const classify = within(section('Classify')).getByRole<HTMLInputElement>('switch', { name: 'Auto-classify' })
   const review = within(section('Review')).getByRole<HTMLInputElement>('switch', { name: 'Auto-review' })
-  expect([refresh.checked, classify.checked, review.checked, review.disabled]).toEqual([true, false, false, true])
+  expect([refresh.checked, classify.checked, review.checked, review.disabled]).toEqual([true, false, false, false])
   expect(section('Classify').textContent).toContain('It uses tokens, and you pay for them.')
-  expect(section('Review').textContent).toContain('It uses tokens, and you pay for them. Auto-review does not work yet.')
+  expect(section('Review').textContent).toContain('except drafts, at most two at a time')
+  expect(section('Review').textContent).toContain('It uses tokens, and you pay for them.')
   expect(within(dialog).queryByText(/needs an OpenRouter API key/)).toBeNull()
 
   await act(async () => {
@@ -491,10 +494,16 @@ it('opens the repository settings with refresh, classify, and a disabled review'
   })
   expect(classify.checked).toBe(true)
   await act(async () => {
+    fireEvent.click(review)
+    await settle()
+  })
+  expect(review.checked).toBe(true)
+  await act(async () => {
     gate.open()
     await settle()
   })
   expect(classify.checked).toBe(true)
+  expect(review.checked).toBe(true)
 
   fails = true
   await act(async () => {
@@ -503,8 +512,7 @@ it('opens the repository settings with refresh, classify, and a disabled review'
   })
   expect(refresh.checked).toBe(true)
   expect(within(dialog).getByRole('alert').textContent).toBe('Internal server error')
-  fireEvent.click(review)
-  expect(sent('PUT', repoSettingsPath).map((seen) => seen.body)).toEqual([{ autoClassify: true }, { autoRefresh: false }])
+  expect(sent('PUT', repoSettingsPath).map((seen) => seen.body)).toEqual([{ autoClassify: true }, { autoReview: true }, { autoRefresh: false }])
   expect(sent('PUT', '/api/settings')).toHaveLength(0)
 
   fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
@@ -530,7 +538,7 @@ it('links the configuration in the repository settings to the GitHub editor on t
 
 it('says in the repository settings when auto-classify misses the key or the model', async () => {
   await signedIn((seen) => {
-    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [] })
+    if (seen.path === '/api/settings') return reply(200, { repo: 'acme/app', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [], autoReviewRepos: [] })
     if (seen.path === repoSettingsPath) return reply(200, { repo: 'acme/app', autoRefresh: false, autoClassify: true })
   })
   const dialog = await openRepoSettings()
@@ -590,7 +598,7 @@ it('edits the global rules in the settings, starts from the template, and shows 
       if (text.includes('version: 2')) return failure(400, 'The global rules are not valid: version must be 1, not 2')
       stored = text
     }
-    return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [], globalRules: stored })
+    return reply(200, { repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: [], autoClassifyRepos: [], autoReviewRepos: [], globalRules: stored })
   })
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Settings' })))
   const dialog = screen.getByRole('dialog', { name: 'Settings' })
@@ -670,7 +678,7 @@ it('starts with the kept sidebar width', async () => {
 
 it('marks the repositories with auto-classify in the picker, and shows them after the starred ones', async () => {
   let autoClassifyRepos = ['acme/web', 'acme/tools']
-  const settings = () => ({ repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: ['acme/tools'], autoClassifyRepos })
+  const settings = () => ({ repo: 'acme/app', model: 'a/model', hasOpenRouterKey: true, starred: ['acme/tools'], autoClassifyRepos, autoReviewRepos: [] })
   await signedIn((seen) => {
     if (seen.path === '/api/repos') return reply(200, ['acme/app', 'acme/docs', 'acme/web', 'Acme/Tools'])
     if (seen.path === '/api/settings') return reply(200, settings())
@@ -905,4 +913,55 @@ it('shows the score and a check for a review below the PR number in the list', a
     await settle()
   })
   expect(within(lead(3) as HTMLElement).getByRole('img', { name: 'Reviewed' })).toBeTruthy()
+})
+
+it('marks the repositories with auto-review in the picker, next to auto-classify, after the starred ones', async () => {
+  await signedIn((seen) => {
+    if (seen.path === '/api/repos') return reply(200, ['acme/app', 'acme/docs', 'acme/web', 'acme/tools', 'acme/both'])
+    if (seen.path === '/api/settings') {
+      return reply(200, {
+        repo: 'acme/app',
+        model: 'a/model',
+        hasOpenRouterKey: true,
+        starred: ['acme/tools'],
+        autoClassifyRepos: ['acme/both'],
+        autoReviewRepos: ['acme/web', 'acme/both', 'acme/tools'],
+      })
+    }
+  })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /acme\/app/ }))
+    await settle()
+  })
+  const picker = screen.getByRole('dialog', { name: 'Repositories' })
+  const items = within(picker)
+    .getAllByRole('listitem')
+    .map((item) =>
+      [
+        within(item).getAllByRole('button')[0].textContent,
+        ...within(item)
+          .queryAllByRole('img')
+          .map((flag) => flag.getAttribute('aria-label')),
+      ].join(' / '),
+    )
+  expect(items).toEqual([
+    'acme/tools / Auto-review is on',
+    'acme/web / Auto-review is on',
+    'acme/both / Auto-classify is on / Auto-review is on',
+    'acme/app',
+    'acme/docs',
+  ])
+})
+
+it('says in the repository settings when auto-review misses the key or the model', async () => {
+  await signedIn((seen) => {
+    if (seen.path === '/api/settings') {
+      return reply(200, { repo: 'acme/app', model: '', hasOpenRouterKey: false, starred: [], autoClassifyRepos: [], autoReviewRepos: [] })
+    }
+    if (seen.path === repoSettingsPath) return reply(200, { repo: 'acme/app', autoRefresh: true, autoClassify: false, autoReview: true })
+  })
+  const dialog = await openRepoSettings()
+  expect(within(dialog).getByRole<HTMLInputElement>('switch', { name: 'Auto-review' }).checked).toBe(true)
+  expect(within(dialog).getByText('Auto-review needs an OpenRouter API key and a model in Settings.')).toBeTruthy()
+  expect(within(dialog).queryByText(/Auto-classify needs/)).toBeNull()
 })

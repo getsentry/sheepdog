@@ -132,6 +132,8 @@ type settingsResponse struct {
 	Starred          []string `json:"starred"`
 	// AutoClassifyRepos are the repositories with auto classify on, in name order.
 	AutoClassifyRepos []string `json:"autoClassifyRepos"`
+	// AutoReviewRepos are the repositories with auto review on, in name order.
+	AutoReviewRepos []string `json:"autoReviewRepos"`
 	// GlobalRules is the rules file text for repositories without .github/sheepdog.yml, or "" without one.
 	GlobalRules string `json:"globalRules"`
 }
@@ -147,6 +149,11 @@ func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user stor
 		internalError(w, err)
 		return
 	}
+	autoReview, err := s.store.AutoReviewRepos(r.Context(), user.ID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 	globalRules, err := s.store.GlobalRules(r.Context(), user.ID)
 	if err != nil {
 		internalError(w, err)
@@ -154,7 +161,7 @@ func (s *Server) writeSettings(w http.ResponseWriter, r *http.Request, user stor
 	}
 	writeJSON(w, http.StatusOK, settingsResponse{
 		Repo: user.Repo, Model: user.Model, HasOpenRouterKey: user.OpenRouterKey != "", Starred: starred,
-		AutoClassifyRepos: autoClassify, GlobalRules: globalRules,
+		AutoClassifyRepos: autoClassify, AutoReviewRepos: autoReview, GlobalRules: globalRules,
 	})
 }
 
@@ -231,6 +238,7 @@ type repoSettingsResponse struct {
 	Repo         string `json:"repo"`
 	AutoRefresh  bool   `json:"autoRefresh"`
 	AutoClassify bool   `json:"autoClassify"`
+	AutoReview   bool   `json:"autoReview"`
 }
 
 // repoSettings reads the switches of the user for the repository, and PUT changes them first.
@@ -250,11 +258,13 @@ func (s *Server) repoSettings(w http.ResponseWriter, r *http.Request, user store
 		var body struct {
 			AutoRefresh  *bool `json:"autoRefresh"`
 			AutoClassify *bool `json:"autoClassify"`
+			AutoReview   *bool `json:"autoReview"`
 		}
 		if !readJSON(w, r, &body) {
 			return
 		}
-		if err := s.store.UpdatePrefs(r.Context(), user.ID, repo, store.PrefsUpdate{AutoRefresh: body.AutoRefresh, AutoClassify: body.AutoClassify}); err != nil {
+		update := store.PrefsUpdate{AutoRefresh: body.AutoRefresh, AutoClassify: body.AutoClassify, AutoReview: body.AutoReview}
+		if err := s.store.UpdatePrefs(r.Context(), user.ID, repo, update); err != nil {
 			internalError(w, err)
 			return
 		}
@@ -263,11 +273,12 @@ func (s *Server) repoSettings(w http.ResponseWriter, r *http.Request, user store
 			return
 		}
 		// A switch that turns on for the selected repository checks GitHub at once.
-		if repo == user.Repo && (prefs.AutoRefresh && !before.AutoRefresh || prefs.AutoClassify && !before.AutoClassify) {
+		turnedOn := prefs.AutoRefresh && !before.AutoRefresh || prefs.AutoClassify && !before.AutoClassify || prefs.AutoReview && !before.AutoReview
+		if repo == user.Repo && turnedOn {
 			s.pollNow(user.ID)
 		}
 	}
-	writeJSON(w, http.StatusOK, repoSettingsResponse{Repo: repo, AutoRefresh: prefs.AutoRefresh, AutoClassify: prefs.AutoClassify})
+	writeJSON(w, http.StatusOK, repoSettingsResponse{Repo: repo, AutoRefresh: prefs.AutoRefresh, AutoClassify: prefs.AutoClassify, AutoReview: prefs.AutoReview})
 }
 
 // star adds a star for PUT and removes it for DELETE, and returns the settings. Stars need no rules file, because they are not PR work.
@@ -533,22 +544,7 @@ func (s *Server) startReview(w http.ResponseWriter, r *http.Request, user store.
 		writeError(w, http.StatusBadRequest, "Set the OpenRouter API key and the classification model in Settings")
 		return
 	}
-	// For a repository with the global rules, review.model of the global rules replaces the model of the user.
-	model := user.Model
-	if global != nil && global.Review.Model != "" {
-		model = global.Review.Model
-	}
-	task, err := s.tasks.Start(user.ID, tasks.ReviewWork{
-		Store:      s.store,
-		GitHub:     github.New(s.cfg.GitHubURL, user.GitHubToken),
-		OpenRouter: openrouter.New(s.cfg.OpenRouterURL, user.OpenRouterKey),
-		UserID:     user.ID,
-		Login:      user.Login,
-		Model:      model,
-		Repo:       repo,
-		Number:     number,
-		Publish:    func(e tasks.ReviewEvent) { s.hub.publish(user.ID, "review", e) },
-	})
+	task, err := s.tasks.Start(user.ID, s.reviewWork(user, repo, number, global))
 	if errors.Is(err, tasks.ErrRunning) {
 		writeError(w, http.StatusConflict, "A review of this pull request is already running")
 		return
@@ -618,6 +614,25 @@ func (s *Server) startClassification(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	writeJSON(w, http.StatusAccepted, task)
+}
+
+// reviewWork uses review.model of the global rules for a repository with the global rules, instead of the model of the user.
+func (s *Server) reviewWork(user store.User, repo string, number int, global *rules.Rules) tasks.ReviewWork {
+	model := user.Model
+	if global != nil && global.Review.Model != "" {
+		model = global.Review.Model
+	}
+	return tasks.ReviewWork{
+		Store:      s.store,
+		GitHub:     github.New(s.cfg.GitHubURL, user.GitHubToken),
+		OpenRouter: openrouter.New(s.cfg.OpenRouterURL, user.OpenRouterKey),
+		UserID:     user.ID,
+		Login:      user.Login,
+		Model:      model,
+		Repo:       repo,
+		Number:     number,
+		Publish:    func(e tasks.ReviewEvent) { s.hub.publish(user.ID, "review", e) },
+	}
 }
 
 // classifyWork polls at once after a stored classification, so that the lane changes without a wait.
